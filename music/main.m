@@ -268,7 +268,12 @@ static NSString *DGDocumentsPath(void) {
                                   DGJSQuote(m)]];
             }
 
-            [weakSelf respond:rid ok:(!error && status > 0) status:status headers:hj body:body];
+            /* Only 2xx/3xx count as success. Feeding a 4xx/5xx error page (usually
+               an HTML body) back as a normal response poisons the source engine's
+               payload guard, which then aborts the whole channel chain. */
+            BOOL ok = (!error && status >= 200 && status < 400);
+
+            [weakSelf respond:rid ok:ok status:status headers:hj body:body];
         }];
     [task resume];
 }
