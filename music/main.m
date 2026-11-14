@@ -6,6 +6,9 @@
  * shim.js -> WKScriptMessageHandler -> NSURLSession, so all five music
  * sources keep working without rewriting the obfuscated source engine.
  *
+ * Also provides: app-state persistence (Documents/appstate.json) and
+ * download-to-Documents with progress callbacks.
+ *
  * Build with clang only; no Xcode project, no CocoaPods, iOS 13.0 target.
  */
 #import <UIKit/UIKit.h>
@@ -21,8 +24,61 @@ static NSString *DGJSQuote(NSString *s) {
     return d ? [[NSString alloc] initWithData:d encoding:NSUTF8StringEncoding] : @"\"\"";
 }
 
+static NSString *DGDocumentsPath(void) {
+    return NSSearchPathForDirectoriesInDomains(NSDocumentDirectory, NSUserDomainMask, YES).firstObject;
+}
+
+#pragma mark - Downloader with progress
+
+@interface DGDownloader : NSObject <NSURLSessionDownloadDelegate>
+@property (nonatomic, copy) void (^onProgress)(double);
+@property (nonatomic, copy) void (^onFinish)(BOOL ok, NSString *fileName);
+@property (nonatomic, strong) NSString *fileName;
+@property (nonatomic, strong) NSURLSession *session;
+@end
+
+@implementation DGDownloader
+
+- (void)startWithURL:(NSURL *)url fileName:(NSString *)fileName {
+    self.fileName = fileName;
+    NSURLSessionConfiguration *cfg = [NSURLSessionConfiguration defaultSessionConfiguration];
+    self.session = [NSURLSession sessionWithConfiguration:cfg delegate:self delegateQueue:nil];
+    [[self.session downloadTaskWithURL:url] resume];
+}
+
+- (void)URLSession:(NSURLSession *)session downloadTask:(NSURLSessionDownloadTask *)task
+                         didWriteData:(int64_t)bytesWritten
+                    totalBytesWritten:(int64_t)totalBytesWritten
+            totalBytesExpectedToWrite:(int64_t)totalBytesExpectedToWrite {
+    if (totalBytesExpectedToWrite <= 0) return;
+    double pct = (double)totalBytesWritten / (double)totalBytesExpectedToWrite * 100.0;
+    if (self.onProgress) self.onProgress(pct);
+}
+
+- (void)URLSession:(NSURLSession *)session downloadTask:(NSURLSessionDownloadTask *)task
+                         didFinishDownloadingToURL:(NSURL *)location {
+    NSString *dir = [DGDocumentsPath() stringByAppendingPathComponent:@"Downloads"];
+    [[NSFileManager defaultManager] createDirectoryAtPath:dir
+                              withIntermediateDirectories:YES attributes:nil error:NULL];
+    NSString *dest = [dir stringByAppendingPathComponent:(self.fileName ?: @"song.mp3")];
+    [[NSFileManager defaultManager] removeItemAtPath:dest error:NULL];
+    BOOL ok = [[NSFileManager defaultManager] moveItemAtPath:location.path toPath:dest error:NULL];
+    if (self.onFinish) self.onFinish(ok, self.fileName);
+}
+
+- (void)URLSession:(NSURLSession *)session task:(NSURLSessionTask *)task
+                            didCompleteWithError:(NSError *)error {
+    if (error && self.onFinish) self.onFinish(NO, self.fileName);
+    [session finishTasksAndInvalidate];
+}
+
+@end
+
+#pragma mark - View controller
+
 @interface DGViewController : UIViewController <WKScriptMessageHandler, WKNavigationDelegate, WKUIDelegate>
 @property (nonatomic, strong) WKWebView *web;
+@property (nonatomic, strong) NSMutableArray *downloads;
 @end
 
 @implementation DGViewController
@@ -31,7 +87,8 @@ static NSString *DGJSQuote(NSString *s) {
 
 - (void)viewDidLoad {
     [super viewDidLoad];
-    self.view.backgroundColor = [UIColor colorWithRed:0.055 green:0.063 blue:0.086 alpha:1.0];
+    self.downloads = [NSMutableArray array];
+    self.view.backgroundColor = [UIColor colorWithRed:0.043 green:0.055 blue:0.078 alpha:1.0];
 
     AVAudioSession *session = [AVAudioSession sharedInstance];
     [session setCategory:AVAudioSessionCategoryPlayback error:nil];
@@ -91,20 +148,20 @@ static NSString *DGJSQuote(NSString *s) {
     }
 }
 
-#pragma mark - Favourites (persisted in Documents)
+#pragma mark - App state
 
-- (NSString *)favPath {
-    NSString *dir = NSSearchPathForDirectoriesInDomains(NSDocumentDirectory, NSUserDomainMask, YES).firstObject;
-    return [dir stringByAppendingPathComponent:@"favourites.json"];
+- (NSString *)statePath {
+    return [DGDocumentsPath() stringByAppendingPathComponent:@"appstate.json"];
 }
 
-- (void)pushFavourites {
-    NSString *json = [NSString stringWithContentsOfFile:[self favPath] encoding:NSUTF8StringEncoding error:NULL] ?: @"[]";
-    [self evalJS:[NSString stringWithFormat:@"if(window.__initFav)window.__initFav(%@);", DGJSQuote(json)]];
+- (void)pushState {
+    NSString *json = [NSString stringWithContentsOfFile:[self statePath]
+                                              encoding:NSUTF8StringEncoding error:NULL] ?: @"{}";
+    [self evalJS:[NSString stringWithFormat:@"if(window.__initStore)window.__initStore(%@);", DGJSQuote(json)]];
 }
 
-- (void)saveFavourites:(NSString *)json {
-    [(json ?: @"[]") writeToFile:[self favPath] atomically:YES encoding:NSUTF8StringEncoding error:NULL];
+- (void)saveState:(NSString *)json {
+    [(json ?: @"{}") writeToFile:[self statePath] atomically:YES encoding:NSUTF8StringEncoding error:NULL];
 }
 
 #pragma mark - WKScriptMessageHandler
@@ -117,7 +174,7 @@ static NSString *DGJSQuote(NSString *s) {
     if ([op isEqualToString:@"http"])              { [self handleHTTP:b]; }
     else if ([op isEqualToString:@"result"])       { [self handleResult:b]; }
     else if ([op isEqualToString:@"download"])     { [self handleDownload:b]; }
-    else if ([op isEqualToString:@"fav"])          { [self saveFavourites:b[@"json"]]; }
+    else if ([op isEqualToString:@"store"])        { [self saveState:b[@"json"]]; }
     else if ([op isEqualToString:@"loaded"])       { NSLog(@"[DG] source engine ready"); }
     else if ([op isEqualToString:@"log"])          { NSLog(@"[DG][web] %@", b[@"msg"]); }
 }
@@ -219,35 +276,39 @@ static NSString *DGJSQuote(NSString *s) {
 - (void)handleDownload:(NSDictionary *)b {
     NSString *urlString = b[@"url"];
     NSURL *url = [NSURL URLWithString:(urlString ?: @"")];
+    NSString *dlId = [b[@"id"] isKindOfClass:[NSString class]] ? b[@"id"] : @"";
     NSString *rawName = [b[@"name"] isKindOfClass:[NSString class]] ? b[@"name"] : @"song.mp3";
     NSString *name = [[rawName stringByReplacingOccurrencesOfString:@"/" withString:@"_"]
                         stringByReplacingOccurrencesOfString:@":" withString:@"_"];
+
     if (!url || !url.scheme) {
-        [self evalJS:[NSString stringWithFormat:@"if(window.__onDownload)window.__onDownload(%@,false);", DGJSQuote(name)]];
+        [self finishDownload:dlId ok:NO name:name];
         return;
     }
-    NSURLSessionDownloadTask *task = [[NSURLSession sharedSession]
-        downloadTaskWithURL:url
-        completionHandler:^(NSURL *location, NSURLResponse *response, NSError *error) {
-            BOOL ok = NO;
-            if (location && !error) {
-                NSString *dir = [NSSearchPathForDirectoriesInDomains(NSDocumentDirectory, NSUserDomainMask, YES).firstObject
-                                 stringByAppendingPathComponent:@"Downloads"];
-                [[NSFileManager defaultManager] createDirectoryAtPath:dir withIntermediateDirectories:YES attributes:nil error:NULL];
-                NSString *dest = [dir stringByAppendingPathComponent:name];
-                [[NSFileManager defaultManager] removeItemAtPath:dest error:NULL];
-                ok = [[NSFileManager defaultManager] moveItemAtPath:location.path toPath:dest error:NULL];
-            }
-            [self evalJS:[NSString stringWithFormat:@"if(window.__onDownload)window.__onDownload(%@,%@);",
-                          DGJSQuote(name), ok ? @"true" : @"false"]];
-        }];
-    [task resume];
+
+    DGDownloader *dl = [[DGDownloader alloc] init];
+    __weak typeof(self) weakSelf = self;
+    dl.onProgress = ^(double pct) {
+        [weakSelf evalJS:[NSString stringWithFormat:@"if(window.__onProgress)window.__onProgress(%@,%f);",
+                          DGJSQuote(dlId), pct]];
+    };
+    dl.onFinish = ^(BOOL ok, NSString *fileName) {
+        [weakSelf finishDownload:dlId ok:ok name:fileName];
+        [weakSelf.downloads removeObject:dl];
+    };
+    [self.downloads addObject:dl];   /* keep alive until the task finishes */
+    [dl startWithURL:url fileName:name];
+}
+
+- (void)finishDownload:(NSString *)dlId ok:(BOOL)ok name:(NSString *)name {
+    [self evalJS:[NSString stringWithFormat:@"if(window.__onDownload)window.__onDownload(%@,%@,%@);",
+                  DGJSQuote(dlId), ok ? @"true" : @"false", DGJSQuote(name)]];
 }
 
 #pragma mark - WKNavigationDelegate / WKUIDelegate
 
 - (void)webView:(WKWebView *)webView didFinishNavigation:(WKNavigation *)navigation {
-    [self pushFavourites];
+    [self pushState];
     [self evalJS:@"if(window.__onHostReady)window.__onHostReady();"];
 }
 
@@ -267,13 +328,14 @@ completionHandler:(void (^)(void))completionHandler {
     [self presentViewController:ac animated:YES completion:nil];
 }
 
-/* Decide which links may open; everything else stays in the WebView. */
 - (void)webView:(WKWebView *)webView decidePolicyForNavigationAction:(WKNavigationAction *)action
 decisionHandler:(void (^)(WKNavigationActionPolicy))decisionHandler {
     decisionHandler(WKNavigationActionPolicyAllow);
 }
 
 @end
+
+#pragma mark - App delegate
 
 @interface DGAppDelegate : UIResponder <UIApplicationDelegate>
 @property (nonatomic, strong) UIWindow *window;

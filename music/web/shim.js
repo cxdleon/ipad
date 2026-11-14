@@ -78,8 +78,11 @@
 
   /* Extra helpers used by the iOS UI layer. */
   window.DG = {
-    fav: function (json) { post({ op: 'fav', json: String(json || '[]') }); },
-    download: function (url, name) { post({ op: 'download', url: String(url), name: String(name) }); },
+    /* Persist the whole app state (favourites / playlists / history / downloads). */
+    store: function (json) { post({ op: 'store', json: String(json || '{}') }); },
+    download: function (url, name, id) {
+      post({ op: 'download', url: String(url), name: String(name), id: String(id || '') });
+    },
     log: function (msg) { post({ op: 'log', msg: String(msg).slice(0, 400) }); }
   };
 })();

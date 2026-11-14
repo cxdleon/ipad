@@ -3,73 +3,243 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, viewport-fit=cover">
+<meta name="apple-mobile-web-app-capable" content="yes">
 <title>东哥音乐网</title>
 <link rel="stylesheet" href="app.css">
 </head>
 <body>
 
-<header class="top">
-  <div class="brand">
-    <div class="logo">&#9834;</div>
-    <div class="brandtext">
-      <h1>东哥音乐网</h1>
-      <p id="engineState">音源引擎加载中&hellip;</p>
+<div id="app">
+  <header class="appbar">
+    <div class="ab-left">
+      <div class="logo">&#9834;</div>
+      <div class="ab-title">
+        <strong id="abTitle">推荐</strong>
+        <small id="engineState">取链引擎启动中&hellip;</small>
+      </div>
+    </div>
+    <div class="ab-right">
+      <button id="btnRefresh" class="iconbtn" title="刷新">&#8635;</button>
+    </div>
+  </header>
+
+  <main id="views">
+
+    <!-- ================= 推荐 ================= -->
+    <section class="view" id="view-home">
+      <div class="hero">
+        <div class="hero-text">
+          <h2>欢迎来到东哥音乐网</h2>
+          <p>听见好音乐 &middot; 想听就听</p>
+          <div class="hero-tags">
+            <span class="tag">五源聚合</span>
+            <span class="tag">同时检索</span>
+            <span class="tag">实时更新</span>
+          </div>
+        </div>
+        <div class="hero-disc">&#9834;</div>
+      </div>
+
+      <div class="block">
+        <div class="block-head"><h3>大家都在搜</h3><span class="hint">全网首发</span></div>
+        <div class="chips" id="hotWords"></div>
+      </div>
+
+      <div class="block">
+        <div class="block-head"><h3>热门榜单</h3><span class="hint" id="chartHint">个官方榜</span></div>
+        <div class="chart-grid" id="chartGrid"></div>
+      </div>
+
+      <div class="block">
+        <div class="block-head"><h3>新歌速递</h3><span class="hint">每日更新</span></div>
+        <div class="song-list compact" id="newSongs"></div>
+      </div>
+
+      <div class="block">
+        <div class="block-head"><h3>精品歌单</h3><span class="hint">编辑精选</span></div>
+        <div class="pl-grid" id="curatedGrid"></div>
+      </div>
+
+      <div class="foot-note">
+        内容来自公开接口 &middot; 播放链接由插件引擎实时解析 &middot; 仅用于个人试听
+      </div>
+    </section>
+
+    <!-- ================= 搜索 ================= -->
+    <section class="view" id="view-search">
+      <div class="searchbar">
+        <input id="q" type="search" placeholder="搜索歌曲 / 歌手" autocomplete="off" spellcheck="false">
+        <button id="btnSearch" class="primary">搜索</button>
+      </div>
+      <div class="chips srcbar" id="srcBar"></div>
+
+      <div id="searchHistoryBlock" class="block">
+        <div class="block-head"><h3>搜索历史</h3><button class="linkbtn" id="btnClearHistory">清空</button></div>
+        <div class="chips" id="historyChips"></div>
+      </div>
+
+      <div class="block">
+        <div class="block-head"><h3 id="resultTitle">五源聚合搜索</h3><span class="hint" id="resultHint">同时检索</span></div>
+        <div class="song-list" id="searchResults"></div>
+      </div>
+    </section>
+
+    <!-- ================= 收藏 ================= -->
+    <section class="view" id="view-fav">
+      <div class="block">
+        <div class="block-head">
+          <h3>我的收藏 <em id="favCount" class="count">0</em></h3>
+          <div class="head-actions">
+            <button class="linkbtn" id="btnPlayAllFav">播放全部</button>
+            <button class="linkbtn danger" id="btnClearFav">清空</button>
+          </div>
+        </div>
+        <div class="song-list" id="favList"></div>
+      </div>
+    </section>
+
+    <!-- ================= 歌单 ================= -->
+    <section class="view" id="view-playlist">
+      <div id="plIndex">
+        <div class="block">
+          <div class="block-head">
+            <h3>我的歌单</h3>
+            <button class="linkbtn" id="btnNewPlaylist">新建歌单</button>
+          </div>
+          <div class="pl-list" id="playlistList"></div>
+        </div>
+      </div>
+      <div id="plDetail" class="hidden">
+        <div class="detail-head">
+          <button class="iconbtn" id="btnPlBack">&#8592;</button>
+          <div class="detail-title">
+            <strong id="plName">歌单</strong>
+            <small id="plMeta">0 首</small>
+          </div>
+          <div class="head-actions">
+            <button class="linkbtn" id="btnPlayAllPl">播放全部</button>
+            <button class="linkbtn danger" id="btnDelPl">删除</button>
+          </div>
+        </div>
+        <div class="song-list" id="plSongs"></div>
+      </div>
+    </section>
+
+    <!-- ================= 我的 ================= -->
+    <section class="view" id="view-mine">
+      <div class="block">
+        <div class="block-head"><h3>最近播放</h3><button class="linkbtn" id="btnClearRecent">清空</button></div>
+        <div class="song-list compact" id="recentList"></div>
+      </div>
+
+      <div class="block">
+        <div class="block-head"><h3>下载</h3><span class="hint" id="dlHint">本地记录</span></div>
+        <div class="song-list compact" id="downloadList"></div>
+      </div>
+
+      <div class="block">
+        <div class="block-head"><h3>设置</h3></div>
+        <div class="setting-row">
+          <span>默认音质</span>
+          <select id="setQuality">
+            <option value="128k">标准 128k</option>
+            <option value="320k">高品质 320k</option>
+            <option value="flac">无损 FLAC</option>
+            <option value="flac24bit">臻品 flac24bit</option>
+          </select>
+        </div>
+        <div class="setting-row">
+          <span>播放模式</span>
+          <select id="setMode">
+            <option value="list">列表循环</option>
+            <option value="single">单曲循环</option>
+            <option value="shuffle">随机播放</option>
+          </select>
+        </div>
+        <div class="setting-row">
+          <span>音源</span>
+          <span class="setting-val" id="srcHealth">检测中&hellip;</span>
+        </div>
+      </div>
+
+      <div class="foot-note">
+        东哥音乐网 iPadOS 13 版 &middot; 五源引擎<br>
+        内容来自公开接口 &middot; 仅用于个人试听
+      </div>
+    </section>
+  </main>
+
+  <!-- mini player -->
+  <div id="mini" class="mini hidden">
+    <div class="mini-cover" id="miniCover">&#9834;</div>
+    <div class="mini-text" id="miniOpen">
+      <strong id="miniTitle">未播放</strong>
+      <small id="miniArtist">选一首歌开始</small>
+    </div>
+    <button id="miniPlay" class="mini-btn">&#9654;</button>
+    <button id="miniNext" class="mini-btn">&#9197;</button>
+  </div>
+
+  <!-- bottom tabs -->
+  <nav class="tabbar">
+    <button class="tab active" data-tab="home"><i>&#8962;</i><span>推荐</span></button>
+    <button class="tab" data-tab="search"><i>&#9906;</i><span>搜索</span></button>
+    <button class="tab" data-tab="fav"><i>&#9829;</i><span>收藏</span></button>
+    <button class="tab" data-tab="playlist"><i>&#9776;</i><span>歌单</span></button>
+    <button class="tab" data-tab="mine"><i>&#9786;</i><span>我的</span></button>
+  </nav>
+</div>
+
+<!-- ================= full player ================= -->
+<div id="full" class="full">
+  <div class="full-bg"></div>
+  <div class="full-top">
+    <button class="iconbtn" id="btnCloseFull">&#9660;</button>
+    <div class="full-head">
+      <strong id="fullTitle">未播放</strong>
+      <small id="fullArtist">&mdash;</small>
+    </div>
+    <button class="iconbtn" id="btnQueue">&#9776;</button>
+  </div>
+
+  <div class="full-body">
+    <div class="full-cover" id="fullCover">&#9834;</div>
+    <div class="full-lyric" id="fullLyric">暂无歌词</div>
+    <div class="full-meta">
+      <span id="fullSource">音源 &mdash;</span>
+      <button class="pill" id="btnQuality">音质 128k</button>
+    </div>
+    <div class="full-comments" id="fullComments">暂时没有评论<br><small>或该歌曲不提供评论</small></div>
+  </div>
+
+  <div class="full-ctrl">
+    <div class="progress-row">
+      <span id="curTime">0:00</span>
+      <input id="seek" type="range" min="0" max="1000" value="0">
+      <span id="totTime">0:00</span>
+    </div>
+    <div class="ctrl-row">
+      <button class="iconbtn" id="btnMode">&#8635;</button>
+      <button class="iconbtn big" id="btnPrev">&#9198;</button>
+      <button class="playbtn" id="btnPlay">&#9654;</button>
+      <button class="iconbtn big" id="btnNext">&#9197;</button>
+      <button class="iconbtn" id="btnFavCur">&#9825;</button>
     </div>
   </div>
-  <div class="searchbar">
-    <input id="q" type="search" placeholder="搜索歌曲 / 歌手" autocomplete="off" spellcheck="false">
-    <button id="searchBtn" class="primary">搜索</button>
-  </div>
-  <div class="opts">
-    <label for="quality">音质</label>
-    <select id="quality">
-      <option value="128k">标准 128k</option>
-      <option value="320k">高品质 320k</option>
-      <option value="flac">无损 FLAC</option>
-      <option value="flac24bit">臻品 flac24bit</option>
-    </select>
-  </div>
-</header>
+</div>
 
-<nav class="tabs">
-  <button class="srctab active" data-src="all">全部</button>
-  <button class="srctab" data-src="tx">QQ音乐</button>
-  <button class="srctab" data-src="wy">网易云</button>
-  <button class="srctab" data-src="kg">酷狗</button>
-  <button class="srctab" data-src="kw">酷我</button>
-  <button class="srctab" data-src="mg">咪咕</button>
-  <span class="spacer"></span>
-  <button id="favTab" class="srctab">收藏 <em id="favCount">0</em></button>
-</nav>
-
-<section class="listwrap">
-  <div class="listhead">
-    <span>歌曲</span><span>歌手</span><span>时长</span><span>来源</span><span>操作</span>
-  </div>
-  <div id="list" class="list"></div>
-</section>
-
-<footer class="player">
-  <div class="pinfo">
-    <div class="cover">&#9834;</div>
-    <div class="ptext">
-      <strong id="pTitle">未播放</strong>
-      <small id="pArtist">选一首歌开始播放</small>
+<!-- ================= queue sheet ================= -->
+<div id="sheet" class="sheet">
+  <div class="sheet-panel">
+    <div class="sheet-head">
+      <strong>播放列表</strong>
+      <span id="queueCount">0 首</span>
+      <button class="linkbtn" id="btnCloseSheet">收起</button>
     </div>
+    <div class="song-list" id="queueList"></div>
   </div>
-  <div class="pctrl">
-    <button id="playBtn" class="round">&#9654;</button>
-    <span id="curTime" class="time">0:00</span>
-    <input id="seek" type="range" min="0" max="1000" value="0">
-    <span id="totTime" class="time">0:00</span>
-  </div>
-  <div class="pvol">
-    <span>音量</span>
-    <input id="vol" type="range" min="0" max="100" value="80">
-  </div>
-</footer>
+</div>
 
-<div id="status" class="status">就绪 &middot; iPadOS 13 版</div>
 <div id="toast" class="toast"></div>
 <audio id="audio" preload="none"></audio>
 
