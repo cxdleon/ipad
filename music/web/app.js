@@ -161,6 +161,22 @@
   function isFav(s) { return S.fav.some(function (f) { return sameSong(f, s); }); }
   function songKey(s) { return s.source + ':' + s.mid; }
 
+  /* Loose title comparison used by the cross-source fallback: strip bracketed
+     suffixes such as "(Live)" / "（R&B版）" and punctuation before comparing. */
+  function normName(s) {
+    return String(s == null ? '' : s)
+      .toLowerCase()
+      .replace(/\([^)]*\)|（[^）]*）|\[[^\]]*\]|【[^】]*】/g, '')
+      .replace(/[\s\-_·・.,，。!！?？'"“”‘’/]/g, '');
+  }
+  function nameMatch(a, b) {
+    var x = normName(a), y = normName(b);
+    if (!x || !y) return false;
+    if (x === y) return true;
+    if (Math.min(x.length, y.length) < 2) return false;
+    return x.indexOf(y) >= 0 || y.indexOf(x) >= 0;
+  }
+
   /* ================= sources ================= */
 
   function mgSwitch() {
@@ -317,6 +333,23 @@
 
   /* ================= search ================= */
 
+  function fetchSource(key, q) {
+    var d = SOURCES[key];
+    if (!d) return Promise.resolve({ key: key, list: [], err: 'unknown' });
+    var o = {};
+    for (var p in d.opts) if (Object.prototype.hasOwnProperty.call(d.opts, p)) o[p] = d.opts[p];
+    return lx.request(d.url(q), o).then(function (r) {
+      var arr = [];
+      try { arr = d.parse(r.body); }
+      catch (e) { log(key + ' parse: ' + e.message); }
+      S.health[key] = arr.length ? 'ok' : 'empty';
+      return { key: key, list: arr, err: null };
+    }).catch(function (e) {
+      S.health[key] = 'fail';
+      return { key: key, list: [], err: (e && e.message) || 'error' };
+    });
+  }
+
   function search(q, opts) {
     opts = opts || {};
     q = (q || '').trim();
@@ -334,21 +367,7 @@
     $('searchResults').innerHTML = '<div class="empty">加载中…</div>';
     status('五源聚合搜索中…');
 
-    var jobs = keys.map(function (k) {
-      var d = SOURCES[k];
-      var o = {};
-      for (var p in d.opts) if (Object.prototype.hasOwnProperty.call(d.opts, p)) o[p] = d.opts[p];
-      return lx.request(d.url(q), o).then(function (r) {
-        var arr = [];
-        try { arr = d.parse(r.body); }
-        catch (e) { log(k + ' parse: ' + e.message); }
-        S.health[k] = arr.length ? 'ok' : 'empty';
-        return { key: k, list: arr, err: null };
-      }).catch(function (e) {
-        S.health[k] = 'fail';
-        return { key: k, list: [], err: (e && e.message) || 'error' };
-      });
-    });
+    var jobs = keys.map(function (k) { return fetchSource(k, q); });
 
     Promise.all(jobs).then(function (res) {
       var all = [], parts = [];
@@ -444,12 +463,59 @@
     window.__invoke(id, s.source, S.quality, JSON.stringify(buildInfo(s)));
     setTimeout(function () {
       if (S.pending[id]) {
+        var pend = S.pending[id];
         delete S.pending[id];
         window.__dgLog('play', 'TIMEOUT ' + id);
         status('暂未取到可用链接');
-        toast('暂未取到可用链接，换个音质或音源试试');
+        if (pend && !pend.download) autoFallback(pend.song, 'timeout');
+        else toast('暂未取到可用链接，换个音质或音源试试');
       }
-    }, 32000);
+    }, 15000);
+  }
+
+  /* Cross-source fallback: a track can be unresolvable on one platform
+     (VIP-only, removed, or the plugin's relay hosts are down). Look the same
+     title up on the other sources and play that version instead. */
+  var fbTried = {};
+  var fbDepth = 0;
+
+  function autoFallback(s, reason) {
+    if (!s) return;
+    var nk = normName(s.name) + '|' + normName(s.singer);
+    if (fbDepth >= 2 || fbTried[nk]) {
+      window.__dgLog('fallback', 'give up depth=' + fbDepth + ' ' + nk);
+      status('这首歌所有音源都取不到');
+      toast('该歌曲无可用资源，换一首试试');
+      return;
+    }
+    fbTried[nk] = 1;
+    var others = Object.keys(SOURCES).filter(function (k) { return k !== s.source && k !== 'tx'; });
+    status('换源中：' + (SRC_NAME[s.source] || s.source) + ' 无资源，正在找其他源…');
+    window.__dgLog('fallback', (SRC_NAME[s.source] || s.source) + ' 无资源(' + (reason || '') + ') -> ' + others.join(','));
+
+    var q = (s.name + ' ' + (s.singer || '')).trim();
+    Promise.all(others.map(function (k) { return fetchSource(k, q); })).then(function (res) {
+      var best = null;
+      res.forEach(function (x) {
+        if (best) return;
+        x.list.slice(0, 10).forEach(function (c) {
+          if (!best && c && c.mid && nameMatch(c.name, s.name)) best = c;
+        });
+      });
+      if (!best) {
+        window.__dgLog('fallback', 'no match: ' + q);
+        status('其他音源也没有这首歌');
+        toast('该歌曲无可用资源，换一首试试');
+        return;
+      }
+      window.__dgLog('fallback', 'switch -> ' + best.source + ' | ' + best.name + ' | ' + best.mid);
+      toast('已切到' + (SRC_NAME[best.source] || best.source) + '播放');
+      fbDepth++;
+      playSong(best);
+    }).catch(function (e) {
+      window.__dgLog('fallback', 'search failed ' + ((e && e.message) || ''));
+      status('换源失败');
+    });
   }
 
   window.__onUrl = function (id, url) {
@@ -461,10 +527,12 @@
     if (url.indexOf('//') === 0) url = 'https:' + url;
     if (!url || !/^(https?|blob|data):/i.test(url)) {
       status('暂未取到可用链接');
-      toast('无法播放该链接');
+      if (p.download) { toast('该音源取不到这首歌'); return; }
+      autoFallback(p.song, 'empty');
       return;
     }
     if (p.download) { startDownload(p.song, url); return; }
+    fbDepth = 0;
     var s = p.song;
     S.current = s;
     audio.src = url;
@@ -1007,6 +1075,8 @@
   function playOne(list, i) {
     S.queue = list.slice();
     S.qi = i;
+    fbDepth = 0;
+    fbTried = {};
     playSong(S.queue[i]);
   }
 
