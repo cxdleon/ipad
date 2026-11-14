@@ -30,6 +30,7 @@ xcrun --sdk iphoneos clang \
   -framework WebKit \
   -framework AVFoundation \
   -framework CoreFoundation \
+  -framework CoreGraphics \
   -o "$APP" main.m
 file "$APP"
 
