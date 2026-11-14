@@ -260,18 +260,48 @@ static NSString *DGDocumentsPath(void) {
             NSData *hd = [NSJSONSerialization dataWithJSONObject:hdrs options:0 error:NULL];
             if (hd) hj = [[NSString alloc] initWithData:hd encoding:NSUTF8StringEncoding] ?: @"{}";
 
+            /* An HTML/XML page is never a usable payload for this app: the source
+               engine's guard treats it as a hijacked channel and aborts the whole
+               chain, so surface it as a failed request instead. Binary payloads
+               (audio/images) are exempt — their decoded text can start with '<'. */
+            NSString *ct = @"";
+            for (NSString *k in hdrs) {
+                if ([k isKindOfClass:[NSString class]] &&
+                    [k caseInsensitiveCompare:@"Content-Type"] == NSOrderedSame) {
+                    ct = [NSString stringWithFormat:@"%@", hdrs[k]].lowercaseString;
+                    break;
+                }
+            }
+            BOOL binary = (ct.length == 0) ? NO :
+                ([ct rangeOfString:@"audio/"].location != NSNotFound ||
+                 [ct rangeOfString:@"video/"].location != NSNotFound ||
+                 [ct rangeOfString:@"image/"].location != NSNotFound ||
+                 [ct rangeOfString:@"octet-stream"].location != NSNotFound ||
+                 [ct rangeOfString:@"mpegurl"].location != NSNotFound);
+
+            NSString *trimmed = [body stringByTrimmingCharactersInSet:
+                                 [NSCharacterSet whitespaceAndNewlineCharacterSet]];
+            BOOL looksMarkup = (!binary && ([trimmed hasPrefix:@"<"] || [trimmed hasPrefix:@"<?xml"]));
+
             if (error || status >= 400 || status == 0) {
                 NSString *m = [NSString stringWithFormat:@"http %ld %@ %@",
                                (long)status, url.host ?: @"",
                                error ? [NSString stringWithFormat:@"%@(%ld)", error.localizedDescription, (long)error.code] : @"-"];
                 [weakSelf evalJS:[NSString stringWithFormat:@"window.__dgLog&&window.__dgLog('net',%@);",
                                   DGJSQuote(m)]];
+            } else if (looksMarkup) {
+                NSString *m = [NSString stringWithFormat:@"html %ld %@%@",
+                               (long)status, url.host ?: @"", url.path ?: @""];
+                if (m.length > 90) m = [m substringToIndex:90];
+                [weakSelf evalJS:[NSString stringWithFormat:@"window.__dgLog&&window.__dgLog('net',%@);",
+                                  DGJSQuote(m)]];
             }
 
-            /* Only 2xx/3xx count as success. Feeding a 4xx/5xx error page (usually
-               an HTML body) back as a normal response poisons the source engine's
-               payload guard, which then aborts the whole channel chain. */
-            BOOL ok = (!error && status >= 200 && status < 400);
+            /* Only 2xx/3xx with a non-markup body count as success. Feeding an
+               error page back as a normal response poisons the source engine's
+               payload guard ("guard: text/html payload"), which then aborts the
+               whole channel chain — including the channels that would work. */
+            BOOL ok = (!error && status >= 200 && status < 400 && !looksMarkup);
 
             [weakSelf respond:rid ok:ok status:status headers:hj body:body];
         }];
