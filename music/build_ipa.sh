@@ -57,13 +57,23 @@ cp "$APP" "Payload/$APP.app/"
 cp Info.plist "Payload/$APP.app/"
 printf 'APPL????' > "Payload/$APP.app/PkgInfo"
 chmod 0755 "Payload/$APP.app/$APP"
-for f in index.html app.js app.css shim.js plugin.js; do
+for f in index.html app.js app.css shim.js plugin.js logo.jpg logo-mark.png; do
   if [[ ! -f "web/$f" ]]; then
     echo "::error::缺少 web/$f" >&2
     exit 1
   fi
   cp "web/$f" "Payload/$APP.app/web/$f"
 done
+
+# App icon set (declared by CFBundleIcons / CFBundleIcons~ipad in Info.plist).
+# Icons live at the bundle root and must be RGB (no alpha channel).
+ICON_COUNT=0
+for f in icon/*.png; do
+  [[ -f "$f" ]] || { echo "::error::icon/ 为空" >&2; exit 1; }
+  cp "$f" "Payload/$APP.app/$(basename "$f")"
+  ICON_COUNT=$((ICON_COUNT + 1))
+done
+echo "图标文件数: $ICON_COUNT"
 PLIST="Payload/$APP.app/Info.plist"
 $PB -c "Set :CFBundleExecutable $APP" "$PLIST"
 $PB -c "Set :MinimumOSVersion $EXPECT_MIN" "$PLIST"
@@ -105,6 +115,11 @@ required = [
     base + 'web/app.css',
     base + 'web/shim.js',
     base + 'web/plugin.js',
+    base + 'web/logo.jpg',
+    base + 'web/logo-mark.png',
+    base + 'Icon-60@3x.png',
+    base + 'Icon-76@2x.png',
+    base + 'Icon-83.5@2x.png',
 ]
 z = zipfile.ZipFile(ipa)
 names = set(z.namelist())

@@ -17,7 +17,7 @@
 <div id="app">
   <header class="appbar">
     <div class="ab-left">
-      <div class="logo">&#9834;</div>
+      <img class="logo" src="logo-mark.png" alt="东哥音乐网">
       <div class="ab-title">
         <strong id="abTitle">推荐</strong>
         <small id="engineState">取链引擎启动中&hellip;</small>
@@ -33,16 +33,13 @@
     <!-- ================= 推荐 ================= -->
     <section class="view" id="view-home">
       <div class="hero">
-        <div class="hero-text">
-          <h2>欢迎来到东哥音乐网</h2>
-          <p>听见好音乐 &middot; 想听就听</p>
-          <div class="hero-tags">
-            <span class="tag">五源聚合</span>
-            <span class="tag">同时检索</span>
-            <span class="tag">实时更新</span>
-          </div>
+        <img class="hero-img" src="logo.jpg" alt="东哥音乐网">
+        <div class="hero-fade"></div>
+        <div class="hero-tags">
+          <span class="tag">五源聚合</span>
+          <span class="tag">同时检索</span>
+          <span class="tag">实时更新</span>
         </div>
-        <div class="hero-disc">&#9834;</div>
       </div>
 
       <div class="block">
@@ -220,12 +217,21 @@
 
   <div class="full-body">
     <div class="full-cover" id="fullCover">&#9834;</div>
-    <div class="full-lyric" id="fullLyric">暂无歌词</div>
+    <div class="full-lyric-wrap" id="lyricWrap">
+      <div class="lyric-inner" id="lyricInner"><div class="lyric-empty">暂无歌词</div></div>
+    </div>
     <div class="full-meta">
       <span id="fullSource">音源 &mdash;</span>
       <button class="pill" id="btnQuality">音质 128k</button>
     </div>
-    <div class="full-comments" id="fullComments">暂时没有评论<br><small>或该歌曲不提供评论</small></div>
+    <div class="full-extras">
+      <div class="seg" id="orderSeg">
+        <button type="button" data-mode="list">列表循环</button>
+        <button type="button" data-mode="single">单曲循环</button>
+        <button type="button" data-mode="shuffle">随机播放</button>
+      </div>
+      <button class="pill" id="btnTimer">定时关闭</button>
+    </div>
   </div>
 
   <div class="full-ctrl">
@@ -235,11 +241,29 @@
       <span id="totTime">0:00</span>
     </div>
     <div class="ctrl-row">
-      <button class="iconbtn" id="btnMode">&#8635;</button>
       <button class="iconbtn big" id="btnPrev">&#9198;</button>
       <button class="playbtn" id="btnPlay">&#9654;</button>
       <button class="iconbtn big" id="btnNext">&#9197;</button>
       <button class="iconbtn" id="btnFavCur">&#9825;</button>
+    </div>
+  </div>
+</div>
+
+<!-- ================= sleep timer sheet ================= -->
+<div id="timerSheet" class="sheet">
+  <div class="sheet-panel">
+    <div class="sheet-head">
+      <strong>定时停止播放</strong>
+      <span id="timerState">未开启</span>
+      <button class="linkbtn" id="btnCloseTimer">收起</button>
+    </div>
+    <div class="timer-list">
+      <button type="button" class="timer-opt" data-min="15">15 分钟后停止</button>
+      <button type="button" class="timer-opt" data-min="30">30 分钟后停止</button>
+      <button type="button" class="timer-opt" data-min="60">60 分钟后停止</button>
+      <button type="button" class="timer-opt" data-min="90">90 分钟后停止</button>
+      <button type="button" class="timer-opt" data-min="-2">播完当前这首后停止</button>
+      <button type="button" class="timer-opt danger" data-min="-1">关闭定时</button>
     </div>
   </div>
 </div>

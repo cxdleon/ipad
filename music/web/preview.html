@@ -45,6 +45,25 @@ function silentWav() {
 var NAMES = ['晴天', '孤勇者', '起风了', '海底', '告白气球', '夜曲', '稻香', '简单爱', '七里香', '富士山下'];
 var ARTISTS = ['周杰伦', '陈奕迅', '林俊杰', '邓紫棋', '李荣浩', '毛不易', '薛之谦', '张学友'];
 
+/* Sample LRC so the lyric panel is visible in preview mode. */
+var LYRIC_SAMPLE = [
+  '[00:00.50]东哥音乐网 · 歌词预览',
+  '[00:03.00]作词 : 示例',
+  '[00:05.50]作曲 : 示例',
+  '[00:08.00]故事的小黄花',
+  '[00:11.50]从出生那年就飘着',
+  '[00:15.00]童年的荡秋千',
+  '[00:18.50]随记忆一直晃到现在',
+  '[00:22.00]吹着前奏望着天空',
+  '[00:25.50]我想起花瓣试着掉落',
+  '[00:29.00]为你翘课的那一天',
+  '[00:32.50]花落的那一天',
+  '[00:36.00]教室的那一间',
+  '[00:39.50]我怎么看不见',
+  '[00:43.00]消失的下雨天',
+  '[00:46.00]我好想再淋一遍'
+].join('\n');
+
 function tracks(prefix, n) {
   var out = [];
   for (var i = 0; i < n; i++) {
@@ -85,6 +104,8 @@ window.__dgMockBridge = function (msg, w) {
       }) } });
     } else if (u.indexOf('client_search_cp') >= 0) {
       body = JSON.stringify({ data: { song: { list: [] } } });
+    } else if (u.indexOf('song/lyric') >= 0) {
+      body = JSON.stringify({ lrc: { lyric: LYRIC_SAMPLE } });
     }
     setTimeout(function () { if (w.__resp) w.__resp(msg.id, true, 200, '{}', body); }, 160);
     return;
@@ -139,7 +160,23 @@ frame.addEventListener('load', function () {
       setTimeout(function () {
         var b = frame.contentDocument.querySelector('#newSongs .s-ops button[data-act="play"]');
         if (b) b.click();
-        setTimeout(function () { var m = frame.contentDocument.querySelector('#miniOpen'); if (m) m.click(); }, 1600);
+        setTimeout(function () {
+          var m = frame.contentDocument.querySelector('#mini');
+          if (m) m.click();
+        }, 1800);
+      }, 600);
+    } else if (q === 'timer') {
+      setTimeout(function () {
+        var b = frame.contentDocument.querySelector('#newSongs .s-ops button[data-act="play"]');
+        if (b) b.click();
+        setTimeout(function () {
+          var m = frame.contentDocument.querySelector('#mini');
+          if (m) m.click();
+          setTimeout(function () {
+            var t = frame.contentDocument.querySelector('#btnTimer');
+            if (t) t.click();
+          }, 700);
+        }, 1800);
       }, 600);
     }
   } catch (e) {}
