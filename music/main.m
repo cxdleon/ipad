@@ -250,22 +250,6 @@ static NSString *DGDocumentsPath(void) {
                 status = http.statusCode;
                 hdrs = http.allHeaderFields ?: @{};
             }
-            NSString *body = @"";
-            if (data.length) {
-                body = [[NSString alloc] initWithData:data encoding:NSUTF8StringEncoding];
-                if (!body) {
-                    NSStringEncoding gbk = CFStringConvertEncodingToNSStringEncoding(kCFStringEncodingGB_18030_2000);
-                    body = [[NSString alloc] initWithData:data encoding:gbk] ?: @"";
-                }
-            }
-            NSString *hj = @"{}";
-            NSData *hd = [NSJSONSerialization dataWithJSONObject:hdrs options:0 error:NULL];
-            if (hd) hj = [[NSString alloc] initWithData:hd encoding:NSUTF8StringEncoding] ?: @"{}";
-
-            /* An HTML/XML page is never a usable payload for this app: the source
-               engine's guard treats it as a hijacked channel and aborts the whole
-               chain, so surface it as a failed request instead. Binary payloads
-               (audio/images) are exempt — their decoded text can start with '<'. */
             NSString *ct = @"";
             for (NSString *k in hdrs) {
                 if ([k isKindOfClass:[NSString class]] &&
@@ -274,19 +258,57 @@ static NSString *DGDocumentsPath(void) {
                     break;
                 }
             }
-            BOOL binary = (ct.length == 0) ? NO :
-                ([ct rangeOfString:@"audio/"].location != NSNotFound ||
-                 [ct rangeOfString:@"video/"].location != NSNotFound ||
-                 [ct rangeOfString:@"image/"].location != NSNotFound ||
-                 [ct rangeOfString:@"octet-stream"].location != NSNotFound ||
-                 [ct rangeOfString:@"mpegurl"].location != NSNotFound);
 
-            NSString *trimmed = [body stringByTrimmingCharactersInSet:
-                                 [NSCharacterSet whitespaceAndNewlineCharacterSet]];
+            /* The engine's guard turns the JS string back into bytes with
+               `charCodeAt(i) & 0xFF` (Latin-1). Decoding audio as UTF-8 destroys
+               every byte > 0x7F, so magic sniffing fails ("guard: unknown magic").
+               Text-ish payloads keep UTF-8 (JSON must stay readable). */
+            NSUInteger firstByte = 0;
+            BOOL hasFirst = NO;
+            if (data.length) {
+                const unsigned char *p = data.bytes;
+                NSUInteger i = 0;
+                while (i < data.length && (p[i] == ' ' || p[i] == '\t' || p[i] == '\r' || p[i] == '\n')) i++;
+                if (i < data.length) { firstByte = p[i]; hasFirst = YES; }
+            }
+            BOOL looksJson = (hasFirst && (firstByte == '{' || firstByte == '['));
+            BOOL textish = (looksJson ||
+                            [ct rangeOfString:@"json"].location != NSNotFound ||
+                            [ct rangeOfString:@"text/"].location != NSNotFound ||
+                            [ct rangeOfString:@"javascript"].location != NSNotFound ||
+                            [ct rangeOfString:@"xml"].location != NSNotFound);
+
+            /* A probe (Range) request only needs the header bytes. If the origin
+               ignores Range and streams the whole track, keep the payload small:
+               pushing megabytes through evaluateJavaScript would stall the UI. */
+            NSString *reqRange = [req valueForHTTPHeaderField:@"Range"];
+            NSData *payload = data;
+            if (reqRange.length && data.length > 65536) {
+                payload = [data subdataWithRange:NSMakeRange(0, 65536)];
+            }
+
+            NSString *body = @"";
+            if (payload.length) {
+                if (textish) {
+                    body = [[NSString alloc] initWithData:payload encoding:NSUTF8StringEncoding];
+                    if (!body) {
+                        NSStringEncoding gbk = CFStringConvertEncodingToNSStringEncoding(kCFStringEncodingGB_18030_2000);
+                        body = [[NSString alloc] initWithData:payload encoding:gbk] ?: @"";
+                    }
+                } else {
+                    /* byte-preserving: one char per byte */
+                    body = [[NSString alloc] initWithData:payload encoding:NSISOLatin1StringEncoding] ?: @"";
+                }
+            }
+            NSString *hj = @"{}";
+            NSData *hd = [NSJSONSerialization dataWithJSONObject:hdrs options:0 error:NULL];
+            if (hd) hj = [[NSString alloc] initWithData:hd encoding:NSUTF8StringEncoding] ?: @"{}";
+
+            /* An HTML/XML page is never a usable payload for this app: the engine's
+               guard aborts the whole channel chain on it. Decide on the raw first
+               byte, so binary bodies are judged without any decoding involved. */
             BOOL htmlType = (ct.length > 0 && [ct rangeOfString:@"html"].location != NSNotFound);
-            BOOL looksMarkup = (!binary && (htmlType ||
-                                            [trimmed hasPrefix:@"<"] ||
-                                            [trimmed hasPrefix:@"<?xml"]));
+            BOOL looksMarkup = (htmlType || (hasFirst && firstByte == '<'));
 
             if (error || status >= 400 || status == 0) {
                 NSString *m = [NSString stringWithFormat:@"http %ld %@ %@",
@@ -300,6 +322,21 @@ static NSString *DGDocumentsPath(void) {
                 if (m.length > 100) m = [m substringToIndex:100];
                 [weakSelf evalJS:[NSString stringWithFormat:@"window.__dgLog&&window.__dgLog('net',%@);",
                                   DGJSQuote(m)]];
+            }
+
+            /* Compact trace of the responses that matter: the engine's 64-byte
+               Range probes (what the payload guard actually inspects) and any
+               failure. Normal JSON calls stay silent so the log stays readable. */
+            BOOL interesting = (reqRange.length > 0 || error || status < 200 || status >= 400 || looksMarkup);
+            if (interesting) {
+                NSString *b0 = hasFirst ? [NSString stringWithFormat:@"%02X", (unsigned)firstByte] : @"-";
+                NSString *trace = [NSString stringWithFormat:@"%@%ld %@%@ ct=%@ b0=%@ n=%lu",
+                                   (reqRange.length ? @"R " : @""), (long)status,
+                                   url.host ?: @"", url.path ?: @"", ct, b0,
+                                   (unsigned long)data.length];
+                if (trace.length > 110) trace = [trace substringToIndex:110];
+                [weakSelf evalJS:[NSString stringWithFormat:@"window.__dgLog&&window.__dgLog('req',%@);",
+                                  DGJSQuote(trace)]];
             }
 
             /* Only 2xx/3xx with a non-markup body count as success. Feeding an

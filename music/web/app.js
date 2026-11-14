@@ -81,7 +81,7 @@
       k: String(kind || 'log'),
       m: String(msg == null ? '' : msg).slice(0, 300)
     });
-    if (DIAG.length > 80) DIAG.shift();
+    if (DIAG.length > 220) DIAG.shift();
     if (S.tab === 'mine') renderDiag();
   };
 
