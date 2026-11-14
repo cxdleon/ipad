@@ -1,0 +1,69 @@
+name: Dongge Music iPadOS 13 Ad-hoc IPA
+
+# Native UIKit + WKWebView rebuild of 东哥音乐网.apk.
+# Reuses the APK's original assets/bridge.html + assets/plugin.js unchanged.
+# Output: one ad-hoc signed IPA (required for jailbroken + AppSync Unified).
+on:
+  workflow_dispatch:
+    inputs:
+      deployment_target:
+        description: 'Minimum iOS version'
+        required: false
+        default: '13.0'
+  push:
+    branches: [ dongge-music ]
+    paths:
+      - 'music/**'
+      - '.github/workflows/music-ipa.yml'
+      - '.gitattributes'
+
+jobs:
+  build-ipa:
+    # macos-15 ships Xcode 16.4; Xcode 26 (macos-latest) cannot target iOS 13.
+    runs-on: macos-15
+    timeout-minutes: 20
+    env:
+      EXPECT_MIN_OS: ${{ github.event.inputs.deployment_target || '13.0' }}
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Select Xcode 16 or older
+        run: |
+          XCODE=$(ls -d /Applications/Xcode_16*.app /Applications/Xcode_15*.app 2>/dev/null | sort -V | tail -1 || true)
+          if [ -z "$XCODE" ]; then
+            echo "::error::No Xcode 16/15 on this runner; Xcode 26 cannot target iOS 13."
+            ls -d /Applications/Xcode*.app 2>/dev/null || true
+            exit 1
+          fi
+          sudo xcode-select -s "$XCODE/Contents/Developer"
+          xcodebuild -version
+          xcrun --sdk iphoneos --show-sdk-version
+
+      - name: Normalize line endings (sources authored on Windows)
+        run: |
+          while IFS= read -r -d '' f; do
+            perl -pi -e 's/\r\n/\n/g' "$f"
+          done < <(find music -type f \( -name '*.sh' -o -name '*.m' -o -name '*.js' -o -name '*.html' -o -name '*.css' -o -name '*.plist' \) -print0)
+          echo "line endings normalized"
+
+      - name: JavaScript syntax check
+        run: |
+          node --version
+          node --check music/web/shim.js
+          node --check music/web/app.js
+          node --check music/web/plugin.js
+
+      - name: Build ad-hoc IPA (iOS 13.0)
+        run: |
+          cd music
+          bash build_ipa.sh
+
+      - name: Upload ad-hoc IPA
+        uses: actions/upload-artifact@v4
+        with:
+          name: dongge-music-adhoc-ipa
+          path: music/dongge-music-adhoc.ipa
+          if-no-files-found: error
+          retention-days: 14

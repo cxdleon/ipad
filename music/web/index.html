@@ -1,0 +1,189 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, viewport-fit=cover">
+<title>东哥音乐网</title>
+<link rel="stylesheet" href="app.css">
+</head>
+<body>
+
+<header class="top">
+  <div class="brand">
+    <div class="logo">&#9834;</div>
+    <div class="brandtext">
+      <h1>东哥音乐网</h1>
+      <p id="engineState">音源引擎加载中&hellip;</p>
+    </div>
+  </div>
+  <div class="searchbar">
+    <input id="q" type="search" placeholder="搜索歌曲 / 歌手" autocomplete="off" spellcheck="false">
+    <button id="searchBtn" class="primary">搜索</button>
+  </div>
+  <div class="opts">
+    <label for="quality">音质</label>
+    <select id="quality">
+      <option value="128k">标准 128k</option>
+      <option value="320k">高品质 320k</option>
+      <option value="flac">无损 FLAC</option>
+      <option value="flac24bit">臻品 flac24bit</option>
+    </select>
+  </div>
+</header>
+
+<nav class="tabs">
+  <button class="srctab active" data-src="all">全部</button>
+  <button class="srctab" data-src="tx">QQ音乐</button>
+  <button class="srctab" data-src="wy">网易云</button>
+  <button class="srctab" data-src="kg">酷狗</button>
+  <button class="srctab" data-src="kw">酷我</button>
+  <button class="srctab" data-src="mg">咪咕</button>
+  <span class="spacer"></span>
+  <button id="favTab" class="srctab">收藏 <em id="favCount">0</em></button>
+</nav>
+
+<section class="listwrap">
+  <div class="listhead">
+    <span>歌曲</span><span>歌手</span><span>时长</span><span>来源</span><span>操作</span>
+  </div>
+  <div id="list" class="list"></div>
+</section>
+
+<footer class="player">
+  <div class="pinfo">
+    <div class="cover">&#9834;</div>
+    <div class="ptext">
+      <strong id="pTitle">未播放</strong>
+      <small id="pArtist">选一首歌开始播放</small>
+    </div>
+  </div>
+  <div class="pctrl">
+    <button id="playBtn" class="round">&#9654;</button>
+    <span id="curTime" class="time">0:00</span>
+    <input id="seek" type="range" min="0" max="1000" value="0">
+    <span id="totTime" class="time">0:00</span>
+  </div>
+  <div class="pvol">
+    <span>音量</span>
+    <input id="vol" type="range" min="0" max="100" value="80">
+  </div>
+</footer>
+
+<div id="status" class="status">就绪 &middot; iPadOS 13 版</div>
+<div id="toast" class="toast"></div>
+<audio id="audio" preload="none"></audio>
+
+<!-- lx runtime: byte-for-byte the APK's assets/bridge.html logic -->
+<script>
+(function () {
+  var seq = 0;
+  var pending = {};
+  var handler = null;
+
+  function bridge() { return window.AndroidBridge || null; }
+
+  window.__resp = function (id, ok, status, headersJson, body) {
+    var p = pending[id];
+    if (!p) return;
+    delete pending[id];
+    if (!ok) { p.reject(new Error('network_error')); return; }
+    var headers = {};
+    try { headers = JSON.parse(headersJson || '{}'); } catch (e) {}
+    p.resolve({ statusCode: status, headers: headers, body: body == null ? '' : body, raw: body });
+  };
+
+  function md5(s) {
+    var b = bridge();
+    try { return b ? b.md5(String(s)) : ''; } catch (e) { return ''; }
+  }
+
+  window.lx = {
+    EVENT_NAMES: { request: 'request', inited: 'inited', updateAlert: 'updateAlert' },
+    version: '2.6.0',
+    env: 'desktop',
+    on: function (name, fn) { if (name === 'request') handler = fn; },
+    send: function (name, data) {
+      var b = bridge();
+      if (!b) return;
+      try {
+        if (name === 'inited') b.onInited(JSON.stringify(data || {}));
+        else if (name === 'updateAlert') b.onAlert(JSON.stringify(data || {}));
+      } catch (e) {}
+    },
+    request: function (url, options, callback) {
+      if (typeof options === 'function') { callback = options; options = {}; }
+      var opts = options || {};
+      var p = new Promise(function (resolve, reject) {
+        var id = ++seq;
+        var timer = setTimeout(function () {
+          if (pending[id]) { delete pending[id]; reject(new Error('timeout')); }
+        }, (opts.timeout || 15000) + 2000);
+        pending[id] = {
+          resolve: function (v) { clearTimeout(timer); resolve(v); },
+          reject: function (e) { clearTimeout(timer); reject(e); }
+        };
+        var b = bridge();
+        if (!b) { delete pending[id]; clearTimeout(timer); reject(new Error('no_bridge')); return; }
+        try { b.http(id, String(url), JSON.stringify(opts)); }
+        catch (e) { delete pending[id]; clearTimeout(timer); reject(e); }
+      });
+      if (typeof callback === 'function') {
+        p.then(function (r) { callback(null, r); }, function (e) { callback(e, null); });
+        return undefined;
+      }
+      return p;
+    },
+    utils: {
+      crypto: {
+        md5: md5,
+        aesEncrypt: function () { return ''; },
+        aesDecrypt: function () { return ''; },
+        rsaEncrypt: function () { return ''; },
+        randomBytes: function (n) {
+          var a = new Uint8Array(n || 16);
+          if (window.crypto && window.crypto.getRandomValues) window.crypto.getRandomValues(a);
+          return a;
+        }
+      },
+      buffer: {
+        bufToRaw: function (b) { return b; },
+        bufToString: function (b) { return String(b); },
+        rawToBuf: function (b) { return b; }
+      }
+    }
+  };
+
+  window.__invoke = function (callId, source, quality, infoJson) {
+    var done = function (url) {
+      var b = bridge();
+      try { b.onResult(callId, url == null ? '' : String(url)); } catch (e) {}
+    };
+    if (typeof handler !== 'function') { done(''); return; }
+    var info;
+    try { info = JSON.parse(infoJson || '{}'); } catch (e) { info = {}; }
+    try {
+      var r = handler({ source: source, action: 'musicUrl', info: { type: quality, musicInfo: info } });
+      Promise.resolve(r).then(function (v) {
+        if (typeof v === 'string') done(v);
+        else if (v && (v.url || v.data)) done(v.url || v.data);
+        else done('');
+      }, function () { done(''); });
+    } catch (e) { done(''); }
+  };
+
+  window.__engineReady = false;
+  window.__markReady = function () {
+    window.__engineReady = true;
+    var b = bridge();
+    if (b) { try { b.onLoaded(); } catch (e) {} }
+  };
+})();
+</script>
+
+<!-- original obfuscated "五源合一" source engine, reused unchanged -->
+<script src="plugin.js"></script>
+<script>try { window.__markReady(); } catch (e) {}</script>
+
+<script src="app.js"></script>
+</body>
+</html>
