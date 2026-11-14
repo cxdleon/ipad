@@ -93,6 +93,7 @@ static NSString *DGDocumentsPath(void) {
     AVAudioSession *session = [AVAudioSession sharedInstance];
     [session setCategory:AVAudioSessionCategoryPlayback error:nil];
     [session setActive:YES error:nil];
+    [session setActive:YES error:nil];
 
     WKWebViewConfiguration *cfg = [[WKWebViewConfiguration alloc] init];
     cfg.allowsInlineMediaPlayback = YES;
@@ -175,7 +176,10 @@ static NSString *DGDocumentsPath(void) {
     else if ([op isEqualToString:@"result"])       { [self handleResult:b]; }
     else if ([op isEqualToString:@"download"])     { [self handleDownload:b]; }
     else if ([op isEqualToString:@"store"])        { [self saveState:b[@"json"]]; }
-    else if ([op isEqualToString:@"loaded"])       { NSLog(@"[DG] source engine ready"); }
+    else if ([op isEqualToString:@"loaded"])       {
+        NSLog(@"[DG] source engine ready");
+        [self evalJS:@"window.__dgLog&&window.__dgLog('native','engine loaded');"];
+    }
     else if ([op isEqualToString:@"log"])          { NSLog(@"[DG][web] %@", b[@"msg"]); }
 }
 
@@ -255,6 +259,14 @@ static NSString *DGDocumentsPath(void) {
             NSString *hj = @"{}";
             NSData *hd = [NSJSONSerialization dataWithJSONObject:hdrs options:0 error:NULL];
             if (hd) hj = [[NSString alloc] initWithData:hd encoding:NSUTF8StringEncoding] ?: @"{}";
+
+            if (error || status >= 400 || status == 0) {
+                NSString *m = [NSString stringWithFormat:@"http %ld %@ %@",
+                               (long)status, url.host ?: @"",
+                               error ? [NSString stringWithFormat:@"%@(%ld)", error.localizedDescription, (long)error.code] : @"-"];
+                [weakSelf evalJS:[NSString stringWithFormat:@"window.__dgLog&&window.__dgLog('net',%@);",
+                                  DGJSQuote(m)]];
+            }
 
             [weakSelf respond:rid ok:(!error && status > 0) status:status headers:hj body:body];
         }];

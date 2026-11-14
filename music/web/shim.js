@@ -64,6 +64,16 @@
     return hexLE(a) + hexLE(b) + hexLE(c) + hexLE(d);
   }
 
+  /* ---------- early error capture (script parse/runtime errors) ---------- */
+  window.__dgEarly = [];
+  if (window.addEventListener) window.addEventListener('error', function (e) {
+    var msg = (e && (e.message || (e.error && e.error.message))) || 'script error';
+    var where = ((e && e.filename) || '').split('/').pop() + ':' + ((e && e.lineno) || 0);
+    var line = msg + ' @' + where;
+    if (typeof window.__dgLog === 'function') window.__dgLog('jserr', line);
+    else if (window.__dgEarly.length < 20) window.__dgEarly.push(line);
+  }, true);
+
   function post(obj) {
     var h = window.webkit && window.webkit.messageHandlers && window.webkit.messageHandlers.iosBridge;
     if (h) { h.postMessage(obj); return; }

@@ -71,6 +71,46 @@
   var audio = $('audio');
   audio.volume = 0.85;
 
+  /* ================= diagnostics ================= */
+  var DIAG = [];
+  window.__dgLog = function (kind, msg) {
+    var d = new Date();
+    function p2(n) { return (n < 10 ? '0' : '') + n; }
+    DIAG.push({
+      t: p2(d.getHours()) + ':' + p2(d.getMinutes()) + ':' + p2(d.getSeconds()),
+      k: String(kind || 'log'),
+      m: String(msg == null ? '' : msg).slice(0, 300)
+    });
+    if (DIAG.length > 80) DIAG.shift();
+    if (S.tab === 'mine') renderDiag();
+  };
+
+  function renderDiag() {
+    var el = $('diagList');
+    if (!el) return;
+    if (!DIAG.length) { el.innerHTML = '<div class="empty">暂无诊断记录</div>'; return; }
+    el.innerHTML = DIAG.slice().reverse().map(function (x) {
+      return '<div class="diag-row"><span class="diag-t">' + esc(x.t) + '</span>' +
+             '<span class="diag-k">' + esc(x.k) + '</span>' +
+             '<span class="diag-m">' + esc(x.m) + '</span></div>';
+    }).join('');
+  }
+
+  /* Retry playback after the next user gesture: WKWebView can reject a play()
+     that happens long after the tap that triggered it. */
+  var pendingPlayUrl = '';
+  function retryOnGesture() {
+    if (!pendingPlayUrl) return;
+    var u = pendingPlayUrl;
+    pendingPlayUrl = '';
+    audio.src = u;
+    var pr = audio.play();
+    if (pr && pr.catch) pr.catch(function () {});
+    if (window.__dgLog) window.__dgLog('audio', 'gesture retry');
+  }
+  document.addEventListener('touchend', retryOnGesture, true);
+  document.addEventListener('click', retryOnGesture, true);
+
   /* ================= persistence ================= */
 
   function saveState() {
@@ -389,18 +429,23 @@
   }
 
   function playSong(s) {
-    if (!window.__engineReady) { toast('取链引擎初始化失败'); return; }
+    if (!window.__engineReady) {
+      window.__dgLog('play', 'engine NOT ready');
+      toast('取链引擎初始化失败'); return;
+    }
     S.current = s;
     updateMini();
     updateFull();
     var id = 'u' + (++S.seq);
     S.pending[id] = { song: s, download: false };
     status('正在解析：' + s.name + ' …');
+    window.__dgLog('play', s.source + ' | ' + s.name + ' | q=' + S.quality + ' | id=' + id);
     if ($('full').classList.contains('open')) $('fullLyric').textContent = '正在解析…';
     window.__invoke(id, s.source, S.quality, JSON.stringify(buildInfo(s)));
     setTimeout(function () {
       if (S.pending[id]) {
         delete S.pending[id];
+        window.__dgLog('play', 'TIMEOUT ' + id);
         status('暂未取到可用链接');
         toast('暂未取到可用链接，换个音质或音源试试');
       }
@@ -409,8 +454,11 @@
 
   window.__onUrl = function (id, url) {
     var p = S.pending[id];
-    if (!p) return;
+    if (!p) { window.__dgLog('result', id + ' no-pending ' + (url ? 'url' : 'empty')); return; }
     delete S.pending[id];
+    window.__dgLog('result', id + ' ' + (url ? String(url).slice(0, 110) : 'EMPTY'));
+    url = String(url == null ? '' : url).trim();
+    if (url.indexOf('//') === 0) url = 'https:' + url;
     if (!url || !/^(https?|blob|data):/i.test(url)) {
       status('暂未取到可用链接');
       toast('无法播放该链接');
@@ -426,9 +474,14 @@
         S.playing = true;
         updateMini(); updateFull();
         status('正在播放：' + s.name);
+        window.__dgLog('audio', 'playing ' + s.name);
         addRecent(s);
       }).catch(function (e) {
+        var msg = (e && (e.name + ': ' + e.message)) || 'unknown';
+        window.__dgLog('audio', 'play() rejected ' + msg);
+        pendingPlayUrl = url;
         status('播放失败：' + ((e && e.message) || '链接可能已失效'));
+        toast('点一下屏幕继续播放');
       });
     }
     updateMini(); updateFull();
@@ -514,7 +567,7 @@
     if (tab === 'home' && !S.chartLoaded) loadCharts(false);
     if (tab === 'fav') renderFav();
     if (tab === 'playlist') renderPlaylists();
-    if (tab === 'mine') renderMine();
+    if (tab === 'mine') { renderMine(); renderDiag(); }
     if (tab === 'search') { renderHistory(); renderSearchResults(); }
   }
 
@@ -1017,6 +1070,25 @@
     S.recent = []; saveState(); renderMine(); toast('已清空');
   });
 
+  $('btnClearDiag').addEventListener('click', function () {
+    DIAG.length = 0; renderDiag(); toast('诊断已清空');
+  });
+
+  $('btnCopyDiag').addEventListener('click', function () {
+    var txt = DIAG.map(function (x) { return x.t + ' [' + x.k + '] ' + x.m; }).join('\n');
+    if (!txt) { toast('暂无诊断记录'); return; }
+    var ta = document.createElement('textarea');
+    ta.value = txt;
+    ta.style.position = 'fixed';
+    ta.style.left = '-9999px';
+    document.body.appendChild(ta);
+    ta.select();
+    var done = false;
+    try { done = document.execCommand('copy'); } catch (e) {}
+    document.body.removeChild(ta);
+    toast(done ? '诊断已复制' : '复制失败，请截图');
+  });
+
   $('setQuality').addEventListener('change', function () {
     S.quality = this.value; saveState(); updateFull(); toast('默认音质 ' + this.value);
   });
@@ -1091,6 +1163,9 @@
     next(true);
   });
   audio.addEventListener('error', function () {
+    var e = audio.error;
+    window.__dgLog('audio', 'error code=' + (e ? e.code : '?') + ' msg=' + (e && e.message ? e.message : '-') +
+                          ' net=' + audio.networkState + ' src=' + String(audio.src || '').slice(0, 80));
     status('无法播放该链接');
   });
 
@@ -1099,7 +1174,16 @@
   window.__onHostReady = function () {
     status(window.__engineReady ? '五源引擎已就绪' : '取链引擎初始化失败');
     $('srcHealth').textContent = '搜索一次后显示';
+    window.__dgLog('boot', 'hostReady engine=' + !!window.__engineReady);
   };
+
+  window.__dgLog('boot', 'engine=' + !!window.__engineReady +
+                         ' handlerAtLoad=' + (window.__engineHandlerAtLoad || '?') +
+                         ' handlerNow=' + (window.__engineHandlerType ? window.__engineHandlerType() : '?'));
+  if (window.__dgEarly && window.__dgEarly.length) {
+    window.__dgEarly.forEach(function (m) { window.__dgLog('jserr', m); });
+    window.__dgEarly.length = 0;
+  }
 
   renderSrcBar();
   switchTab('home');

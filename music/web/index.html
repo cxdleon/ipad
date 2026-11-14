@@ -167,6 +167,17 @@
         </div>
       </div>
 
+      <div class="block">
+        <div class="block-head">
+          <h3>诊断</h3>
+          <span class="head-actions">
+            <button class="linkbtn" id="btnCopyDiag">复制</button>
+            <button class="linkbtn" id="btnClearDiag">清空</button>
+          </span>
+        </div>
+        <div class="diag" id="diagList"></div>
+      </div>
+
       <div class="foot-note">
         东哥音乐网 iPadOS 13 版 &middot; 五源引擎<br>
         内容来自公开接口 &middot; 仅用于个人试听
@@ -246,7 +257,7 @@
 </div>
 
 <div id="toast" class="toast"></div>
-<audio id="audio" preload="none"></audio>
+<audio id="audio" preload="auto" playsinline webkit-playsinline></audio>
 
 <!-- lx runtime: byte-for-byte the APK's assets/bridge.html logic -->
 <script>
@@ -328,22 +339,41 @@
     }
   };
 
+  window.__engineHandlerType = function () { return typeof handler; };
+
   window.__invoke = function (callId, source, quality, infoJson) {
+    var log = function (m) { if (window.__dgLog) window.__dgLog('engine', m); };
     var done = function (url) {
       var b = bridge();
       try { b.onResult(callId, url == null ? '' : String(url)); } catch (e) {}
     };
-    if (typeof handler !== 'function') { done(''); return; }
+    if (typeof handler !== 'function') {
+      log('no_handler source=' + source + ' type=' + typeof handler);
+      done(''); return;
+    }
+    log('invoke ' + source + ' ' + quality);
     var info;
     try { info = JSON.parse(infoJson || '{}'); } catch (e) { info = {}; }
     try {
       var r = handler({ source: source, action: 'musicUrl', info: { type: quality, musicInfo: info } });
       Promise.resolve(r).then(function (v) {
-        if (typeof v === 'string') done(v);
-        else if (v && (v.url || v.data)) done(v.url || v.data);
-        else done('');
-      }, function () { done(''); });
-    } catch (e) { done(''); }
+        if (typeof v === 'string') {
+          if (!v) log('resolved EMPTY string ' + source);
+          done(v);
+        } else if (v && (v.url || v.data)) {
+          done(v.url || v.data);
+        } else {
+          log('resolved junk ' + source + ' ' + Object.prototype.toString.call(v) + ' ' + String(v).slice(0, 80));
+          done('');
+        }
+      }, function (e) {
+        log('handler REJECTED ' + source + ' ' + ((e && (e.name + ': ' + e.message)) || String(e)));
+        done('');
+      });
+    } catch (e) {
+      log('handler THREW ' + source + ' ' + ((e && (e.name + ': ' + e.message)) || String(e)));
+      done('');
+    }
   };
 
   window.__engineReady = false;
@@ -357,7 +387,10 @@
 
 <!-- original obfuscated "五源合一" source engine, reused unchanged -->
 <script src="plugin.js"></script>
-<script>try { window.__markReady(); } catch (e) {}</script>
+<script>
+  try { window.__markReady(); } catch (e) {}
+  window.__engineHandlerAtLoad = window.__engineHandlerType ? window.__engineHandlerType() : '?';
+</script>
 
 <script src="app.js"></script>
 </body>
