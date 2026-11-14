@@ -100,6 +100,7 @@
      that happens long after the tap that triggered it. */
   var pendingPlayUrl = '';
   function retryOnGesture() {
+    if (NAT && NAT.on) { pendingPlayUrl = ''; return; }
     if (!pendingPlayUrl) return;
     var u = pendingPlayUrl;
     pendingPlayUrl = '';
@@ -110,6 +111,132 @@
   }
   document.addEventListener('touchend', retryOnGesture, true);
   document.addEventListener('click', retryOnGesture, true);
+
+  /* ================= playback transport =================
+     Inside the app the URL is handed to a native AVPlayer. WKWebView's <audio>
+     on a file:// page mis-reports duration for these CDN streams and fires
+     `ended` a few seconds in — indistinguishable from a 10-second preview.
+     In a plain browser (preview harness) there is no native handler, so the
+     <audio> element stays in charge. */
+  var NAT = { on: false, t: 0, dur: 0, buf: 0, ready: false };
+
+  function nativeTransport() {
+    return !!(window.DG && typeof window.DG.play === 'function' &&
+              window.webkit && window.webkit.messageHandlers &&
+              window.webkit.messageHandlers.iosBridge);
+  }
+
+  function mediaDur() {
+    return NAT.on ? NAT.dur : (isFinite(audio.duration) ? audio.duration : 0);
+  }
+
+  function paintProgress() {
+    var t = NAT.on ? NAT.t : (audio.currentTime || 0);
+    var d = mediaDur();
+    $('curTime').textContent = fmt(t);
+    $('totTime').textContent = fmt(d || (S.current ? S.current.dur : 0));
+    if (d > 0 && isFinite(d)) $('seek').value = Math.round(t / d * 1000);
+  }
+
+  function seekTo(t) {
+    if (NAT.on) { NAT.t = t; window.DG.seek(t); paintProgress(); return; }
+    try { audio.currentTime = t; } catch (e) {}
+  }
+
+  function startPlayback(url, s) {
+    NAT.t = 0; NAT.dur = 0; NAT.buf = 0; NAT.ready = false;
+    if (nativeTransport()) {
+      NAT.on = true;
+      /* Release the media element so it cannot race the native player for the
+         same URL (and cannot fire a stale `error` into the UI). */
+      try { audio.pause(); audio.removeAttribute('src'); audio.load(); } catch (e) {}
+      status('正在缓冲：' + s.name);
+      window.DG.play(url);
+      window.__dgLog('audio', 'native play ' + String(url).slice(0, 70));
+      return;
+    }
+    NAT.on = false;
+    audio.src = url;
+    var pr = audio.play();
+    if (pr && pr.then) {
+      pr.then(function () {
+        S.playing = true;
+        updateMini(); updateFull();
+        status('正在播放：' + s.name);
+        window.__dgLog('audio', 'playing ' + s.name);
+        addRecent(s);
+      }).catch(function (e) {
+        var msg = (e && (e.name + ': ' + e.message)) || 'unknown';
+        window.__dgLog('audio', 'play() rejected ' + msg);
+        pendingPlayUrl = url;
+        status('播放失败：' + ((e && e.message) || '链接可能已失效'));
+        toast('点一下屏幕继续播放');
+      });
+    }
+  }
+
+  /* Native player -> UI */
+  window.__player = function (ev) {
+    if (!ev || !NAT.on) return;
+    var k = ev.ev;
+
+    if (k === 'time') {
+      NAT.t = ev.t || 0;
+      if (ev.dur > 0) NAT.dur = ev.dur;
+      NAT.buf = ev.buf || 0;
+      /* st: 0 unknown, 1 readyToPlay, 2 failed (AVPlayerItemStatus) */
+      if (ev.st === 1 && !NAT.ready) {
+        NAT.ready = true;
+        window.__dgLog('audio', 'ready dur=' + NAT.dur.toFixed(1) + 's buf=' + NAT.buf.toFixed(1) + 's');
+      }
+      if (ev.err) {
+        window.__dgLog('audio', 'item failed code=' + ev.code + ' ' + ev.err);
+        status('播放失败：' + ev.err);
+      }
+      paintProgress();
+      return;
+    }
+    if (k === 'loadstart') {
+      window.__dgLog('audio', 'loadstart referer=' + (ev.referer || '-'));
+      return;
+    }
+    if (k === 'playing') {
+      S.playing = true; updateMini(); updateFull();
+      status('正在播放：' + (S.current ? S.current.name : ''));
+      if (S.current) addRecent(S.current);
+      return;
+    }
+    if (k === 'paused') {
+      S.playing = false; updateMini(); updateFull();
+      return;
+    }
+    if (k === 'stalled') {
+      window.__dgLog('audio', 'stalled at ' + NAT.t.toFixed(1) + 's buf=' + NAT.buf.toFixed(1) + 's');
+      status('缓冲中…');
+      return;
+    }
+    if (k === 'ended') {
+      window.__dgLog('audio', 'ended at ' + NAT.t.toFixed(1) + 's dur=' + NAT.dur.toFixed(1) + 's');
+      var cur = S.current;
+      var expect = (cur && cur.dur) ? cur.dur : 0;
+      /* A stream that ends far short of the track's own metadata length is a
+         preview/truncated file, not the real song: try another source instead
+         of silently going quiet. */
+      if (expect > 60 && NAT.dur > 0 && NAT.dur < expect * 0.7) {
+        window.__dgLog('audio', 'SHORT stream ' + NAT.dur.toFixed(0) + 's vs expected ' + expect.toFixed(0) + 's');
+        if (cur) autoFallback(cur, 'short');
+        return;
+      }
+      if (S.mode === 'single') { seekTo(0); window.DG.resume(); return; }
+      next(true);
+      return;
+    }
+    if (k === 'error') {
+      window.__dgLog('audio', 'native error code=' + (ev.code || '?') + ' ' + (ev.msg || ''));
+      status('无法播放该链接');
+      toast('该链接无法播放');
+    }
+  };
 
   /* ================= persistence ================= */
 
@@ -535,23 +662,7 @@
     fbDepth = 0;
     var s = p.song;
     S.current = s;
-    audio.src = url;
-    var pr = audio.play();
-    if (pr && pr.then) {
-      pr.then(function () {
-        S.playing = true;
-        updateMini(); updateFull();
-        status('正在播放：' + s.name);
-        window.__dgLog('audio', 'playing ' + s.name);
-        addRecent(s);
-      }).catch(function (e) {
-        var msg = (e && (e.name + ': ' + e.message)) || 'unknown';
-        window.__dgLog('audio', 'play() rejected ' + msg);
-        pendingPlayUrl = url;
-        status('播放失败：' + ((e && e.message) || '链接可能已失效'));
-        toast('点一下屏幕继续播放');
-      });
-    }
+    startPlayback(url, s);
     updateMini(); updateFull();
   };
 
@@ -578,7 +689,7 @@
   }
   function prev() {
     if (!S.queue.length) return;
-    if (audio.currentTime > 3) { audio.currentTime = 0; return; }
+    if ((NAT.on ? NAT.t : audio.currentTime) > 3) { seekTo(0); return; }
     playAt(S.qi - 1);
   }
 
@@ -856,7 +967,7 @@
     $('btnFavCur').innerHTML = s && isFav(s) ? '&#9829;' : '&#9825;';
     $('btnFavCur').style.color = s && isFav(s) ? '#ff7b8a' : '';
     $('fullCover').classList.toggle('spin', !!S.playing);
-    if (!isFinite(audio.duration) || !audio.duration) {
+    if (!mediaDur()) {
       $('totTime').textContent = s ? fmt(s.dur) : '0:00';
     }
     if (s) $('fullLyric').textContent = '暂无歌词';
@@ -1180,6 +1291,13 @@
   $('btnPrev').addEventListener('click', prev);
 
   function togglePlay() {
+    if (!S.current) { toast('先选一首歌'); return; }
+    if (NAT.on) {
+      if (S.playing) { window.DG.pause(); S.playing = false; }
+      else { window.DG.resume(); S.playing = true; }
+      updateMini(); updateFull();
+      return;
+    }
     if (!audio.src) { toast('先选一首歌'); return; }
     if (audio.paused) audio.play(); else audio.pause();
   }
@@ -1210,29 +1328,29 @@
   });
 
   $('seek').addEventListener('input', function () {
-    if (audio.duration && isFinite(audio.duration)) {
-      audio.currentTime = audio.duration * (this.value / 1000);
-    }
+    var d = mediaDur();
+    if (d > 0 && isFinite(d)) seekTo(d * (this.value / 1000));
   });
 
   audio.addEventListener('timeupdate', function () {
-    $('curTime').textContent = fmt(audio.currentTime);
-    $('totTime').textContent = fmt(audio.duration);
-    if (audio.duration && isFinite(audio.duration)) {
-      $('seek').value = Math.round(audio.currentTime / audio.duration * 1000);
-    }
+    if (NAT.on) return;
+    paintProgress();
   });
   audio.addEventListener('play', function () {
+    if (NAT.on) return;
     S.playing = true; updateMini(); updateFull();
   });
   audio.addEventListener('pause', function () {
+    if (NAT.on) return;
     S.playing = false; updateMini(); updateFull();
   });
   audio.addEventListener('ended', function () {
+    if (NAT.on) return;
     if (S.mode === 'single') { audio.currentTime = 0; audio.play(); return; }
     next(true);
   });
   audio.addEventListener('error', function () {
+    if (NAT.on) return;
     var e = audio.error;
     window.__dgLog('audio', 'error code=' + (e ? e.code : '?') + ' msg=' + (e && e.message ? e.message : '-') +
                           ' net=' + audio.networkState + ' src=' + String(audio.src || '').slice(0, 80));

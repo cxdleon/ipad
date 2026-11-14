@@ -111,6 +111,13 @@
     download: function (url, name, id) {
       post({ op: 'download', url: String(url), name: String(name), id: String(id || '') });
     },
+    /* Native AVPlayer transport (see main.m). Preferred over <audio> inside the
+       app: WKWebView's media element mis-reports duration on these CDN streams. */
+    play: function (url) { post({ op: 'play', url: String(url) }); },
+    pause: function () { post({ op: 'pause' }); },
+    resume: function () { post({ op: 'resume' }); },
+    seek: function (t) { post({ op: 'seek', t: Number(t) || 0 }); },
+    stop: function () { post({ op: 'stop' }); },
     log: function (msg) { post({ op: 'log', msg: String(msg).slice(0, 400) }); }
   };
 })();

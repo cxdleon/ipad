@@ -29,6 +29,7 @@ xcrun --sdk iphoneos clang \
   -framework Foundation \
   -framework WebKit \
   -framework AVFoundation \
+  -framework CoreMedia \
   -framework CoreFoundation \
   -framework CoreGraphics \
   -o "$APP" main.m

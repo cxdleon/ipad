@@ -15,6 +15,7 @@
 #import <WebKit/WebKit.h>
 #import <AVFoundation/AVFoundation.h>
 #import <CoreFoundation/CoreFoundation.h>
+#import <math.h>
 
 /* Encode any NSString as a safe JS string literal (including quotes). */
 static NSString *DGJSQuote(NSString *s) {
@@ -26,6 +27,23 @@ static NSString *DGJSQuote(NSString *s) {
 
 static NSString *DGDocumentsPath(void) {
     return NSSearchPathForDirectoriesInDomains(NSDocumentDirectory, NSUserDomainMask, YES).firstObject;
+}
+
+/* Music CDNs reject or throttle requests that arrive with no Referer.
+   Match the referer to the host instead of sending one global value, which
+   would break the platforms that do not expect it. */
+static NSString *DGRefererForURL(NSURL *url) {
+    NSString *h = (url.host ?: @"").lowercaseString;
+    if ([h hasSuffix:@"126.net"] || [h hasSuffix:@"163.com"] || [h hasSuffix:@"163cn.tv"]) return @"https://music.163.com/";
+    if ([h hasSuffix:@"kugou.com"] || [h hasSuffix:@"kugou.net"] || [h hasSuffix:@"kgimg.com"]) return @"https://www.kugou.com/";
+    if ([h hasSuffix:@"kuwo.cn"]) return @"http://www.kuwo.cn/";
+    if ([h hasSuffix:@"migu.cn"] || [h hasSuffix:@"msstatic.com"]) return @"https://music.migu.cn/";
+    if ([h hasSuffix:@"qq.com"]) return @"https://y.qq.com/";
+    return @"";
+}
+
+static NSString *DGMediaUA(void) {
+    return @"Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36";
 }
 
 #pragma mark - Downloader with progress
@@ -79,6 +97,13 @@ static NSString *DGDocumentsPath(void) {
 @interface DGViewController : UIViewController <WKScriptMessageHandler, WKNavigationDelegate, WKUIDelegate>
 @property (nonatomic, strong) WKWebView *web;
 @property (nonatomic, strong) NSMutableArray *downloads;
+/* Native playback. WKWebView's <audio> on iOS 13 (file:// origin, progressive
+   http stream) reports a bogus duration and fires `ended` after a few seconds
+   on these CDN links; AVPlayer handles Range/resume/background properly. */
+@property (nonatomic, strong) AVPlayer *player;
+@property (nonatomic, strong) id playerTimeObs;
+@property (nonatomic, assign) float playerLastRate;
+@property (nonatomic, copy) NSString *playerUrl;
 @end
 
 @implementation DGViewController
@@ -140,6 +165,11 @@ static NSString *DGDocumentsPath(void) {
     NSLog(@"[DG] loading %@", index.path);
 }
 
+- (void)dealloc {
+    if (_playerTimeObs) [_player removeTimeObserver:_playerTimeObs];
+    [[NSNotificationCenter defaultCenter] removeObserver:self];
+}
+
 - (void)evalJS:(NSString *)js {
     if (!js.length) return;
     if ([NSThread isMainThread]) {
@@ -176,6 +206,11 @@ static NSString *DGDocumentsPath(void) {
     else if ([op isEqualToString:@"result"])       { [self handleResult:b]; }
     else if ([op isEqualToString:@"download"])     { [self handleDownload:b]; }
     else if ([op isEqualToString:@"store"])        { [self saveState:b[@"json"]]; }
+    else if ([op isEqualToString:@"play"])         { [self handlePlay:b]; }
+    else if ([op isEqualToString:@"pause"])        { [self handlePlayerPause]; }
+    else if ([op isEqualToString:@"resume"])       { [self handlePlayerResume]; }
+    else if ([op isEqualToString:@"seek"])         { [self handlePlayerSeek:b]; }
+    else if ([op isEqualToString:@"stop"])         { [self stopPlayer]; }
     else if ([op isEqualToString:@"loaded"])       {
         NSLog(@"[DG] source engine ready");
         [self evalJS:@"window.__dgLog&&window.__dgLog('native','engine loaded');"];
@@ -392,6 +427,131 @@ static NSString *DGDocumentsPath(void) {
 - (void)finishDownload:(NSString *)dlId ok:(BOOL)ok name:(NSString *)name {
     [self evalJS:[NSString stringWithFormat:@"if(window.__onDownload)window.__onDownload(%@,%@,%@);",
                   DGJSQuote(dlId), ok ? @"true" : @"false", DGJSQuote(name)]];
+}
+
+#pragma mark - Native audio player
+
+- (void)pushPlayerEvent:(NSDictionary *)ev {
+    NSData *d = [NSJSONSerialization dataWithJSONObject:ev options:0 error:NULL];
+    if (!d) return;
+    NSString *json = [[NSString alloc] initWithData:d encoding:NSUTF8StringEncoding];
+    if (!json.length) return;
+    [self evalJS:[NSString stringWithFormat:@"if(window.__player)window.__player(%@);", json]];
+}
+
+- (void)handlePlay:(NSDictionary *)b {
+    NSString *us = [b[@"url"] isKindOfClass:[NSString class]] ? b[@"url"] : @"";
+    NSURL *url = [NSURL URLWithString:us];
+    if (!url || !url.scheme) {
+        [self pushPlayerEvent:@{@"ev": @"error", @"msg": @"bad_url"}];
+        return;
+    }
+
+    [self stopPlayer];
+
+    NSMutableDictionary *assetOpts = [NSMutableDictionary dictionary];
+    NSMutableDictionary *hdr = [NSMutableDictionary dictionary];
+    hdr[@"User-Agent"] = DGMediaUA();
+    NSString *referer = DGRefererForURL(url);
+    if (referer.length) hdr[@"Referer"] = referer;
+    assetOpts[@"AVURLAssetHTTPHeaderFieldsKey"] = hdr;
+
+    AVURLAsset *asset = [AVURLAsset URLAssetWithURL:url options:assetOpts];
+    AVPlayerItem *item = [AVPlayerItem playerItemWithAsset:asset];
+    self.player = [AVPlayer playerWithPlayerItem:item];
+    self.player.automaticallyWaitsToMinimizeStalling = YES;
+    self.playerUrl = us;
+    self.playerLastRate = 0.0f;
+
+    [[AVAudioSession sharedInstance] setCategory:AVAudioSessionCategoryPlayback error:nil];
+    [[AVAudioSession sharedInstance] setActive:YES error:nil];
+
+    NSNotificationCenter *nc = [NSNotificationCenter defaultCenter];
+    [nc addObserver:self selector:@selector(onItemEnded:) name:AVPlayerItemDidPlayToEndTimeNotification object:item];
+    [nc addObserver:self selector:@selector(onItemFailed:) name:AVPlayerItemFailedToPlayToEndTimeNotification object:item];
+    [nc addObserver:self selector:@selector(onItemStalled:) name:AVPlayerItemPlaybackStalledNotification object:item];
+
+    __weak typeof(self) weakSelf = self;
+    self.playerTimeObs = [self.player addPeriodicTimeObserverForInterval:CMTimeMakeWithSeconds(0.5, 600)
+                                                                   queue:dispatch_get_main_queue()
+                                                              usingBlock:^(CMTime t) { [weakSelf playerTick]; }];
+
+    [self.player play];
+    [self pushPlayerEvent:@{@"ev": @"loadstart", @"url": us, @"referer": referer ?: @""}];
+}
+
+- (void)playerTick {
+    AVPlayerItem *item = self.player.currentItem;
+    if (!item) return;
+
+    double t = CMTimeGetSeconds(self.player.currentTime);
+    if (!isfinite(t) || t < 0) t = 0;
+    double dur = CMTimeGetSeconds(item.duration);
+    if (!isfinite(dur) || dur < 0) dur = 0;
+    double buf = 0;
+    NSArray *ranges = item.loadedTimeRanges;
+    if (ranges.count) {
+        CMTimeRange r = [[ranges lastObject] CMTimeRangeValue];
+        double e = CMTimeGetSeconds(CMTimeRangeGetEnd(r));
+        if (isfinite(e) && e > 0) buf = e;
+    }
+
+    NSMutableDictionary *ev = [NSMutableDictionary dictionary];
+    ev[@"ev"] = @"time";
+    ev[@"t"] = @(t);
+    ev[@"dur"] = @(dur);
+    ev[@"buf"] = @(buf);
+    ev[@"st"] = @((long)item.status);
+    if (item.status == AVPlayerItemStatusFailed) {
+        NSError *e = item.error;
+        ev[@"err"] = e.localizedDescription ?: @"item failed";
+        ev[@"code"] = @((long)e.code);
+    }
+    [self pushPlayerEvent:ev];
+
+    float rate = self.player.rate;
+    if ((rate > 0.01f) != (self.playerLastRate > 0.01f)) {
+        self.playerLastRate = rate;
+        [self pushPlayerEvent:@{@"ev": rate > 0.01f ? @"playing" : @"paused"}];
+    }
+}
+
+- (void)onItemEnded:(NSNotification *)n   { [self pushPlayerEvent:@{@"ev": @"ended"}]; }
+- (void)onItemStalled:(NSNotification *)n { [self pushPlayerEvent:@{@"ev": @"stalled"}]; }
+
+- (void)onItemFailed:(NSNotification *)n {
+    NSError *e = n.userInfo[AVPlayerItemFailedToPlayToEndTimeErrorKey];
+    [self pushPlayerEvent:@{@"ev": @"error",
+                            @"msg": e.localizedDescription ?: @"failed to play to end",
+                            @"code": @((long)e.code)}];
+}
+
+- (void)handlePlayerPause  { [self.player pause]; }
+- (void)handlePlayerResume {
+    if (!self.player) return;
+    [[AVAudioSession sharedInstance] setActive:YES error:nil];
+    [self.player play];
+}
+
+- (void)handlePlayerSeek:(NSDictionary *)b {
+    if (!self.player) return;
+    double t = [b[@"t"] doubleValue];
+    if (!isfinite(t) || t < 0) t = 0;
+    [self.player seekToTime:CMTimeMakeWithSeconds(t, 600)
+            toleranceBefore:kCMTimeZero
+               toleranceAfter:kCMTimeZero];
+}
+
+- (void)stopPlayer {
+    if (self.playerTimeObs) {
+        [self.player removeTimeObserver:self.playerTimeObs];
+        self.playerTimeObs = nil;
+    }
+    [[NSNotificationCenter defaultCenter] removeObserver:self];
+    [self.player pause];
+    self.player = nil;
+    self.playerUrl = nil;
+    self.playerLastRate = 0.0f;
 }
 
 #pragma mark - WKNavigationDelegate / WKUIDelegate
