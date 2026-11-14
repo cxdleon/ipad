@@ -214,7 +214,9 @@ static NSString *DGDocumentsPath(void) {
         }
     }
     if (![req valueForHTTPHeaderField:@"User-Agent"]) {
-        [req setValue:@"Mozilla/5.0 (iPad; CPU OS 13_5 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko)"
+        /* Must be a well-formed UA: the truncated form makes several music
+           gateways answer with an HTML block page instead of JSON. */
+        [req setValue:@"Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
           forHTTPHeaderField:@"User-Agent"];
     }
     double timeoutMs = [opts[@"timeout"] doubleValue];
@@ -281,7 +283,10 @@ static NSString *DGDocumentsPath(void) {
 
             NSString *trimmed = [body stringByTrimmingCharactersInSet:
                                  [NSCharacterSet whitespaceAndNewlineCharacterSet]];
-            BOOL looksMarkup = (!binary && ([trimmed hasPrefix:@"<"] || [trimmed hasPrefix:@"<?xml"]));
+            BOOL htmlType = (ct.length > 0 && [ct rangeOfString:@"html"].location != NSNotFound);
+            BOOL looksMarkup = (!binary && (htmlType ||
+                                            [trimmed hasPrefix:@"<"] ||
+                                            [trimmed hasPrefix:@"<?xml"]));
 
             if (error || status >= 400 || status == 0) {
                 NSString *m = [NSString stringWithFormat:@"http %ld %@ %@",
@@ -290,9 +295,9 @@ static NSString *DGDocumentsPath(void) {
                 [weakSelf evalJS:[NSString stringWithFormat:@"window.__dgLog&&window.__dgLog('net',%@);",
                                   DGJSQuote(m)]];
             } else if (looksMarkup) {
-                NSString *m = [NSString stringWithFormat:@"html %ld %@%@",
-                               (long)status, url.host ?: @"", url.path ?: @""];
-                if (m.length > 90) m = [m substringToIndex:90];
+                NSString *m = [NSString stringWithFormat:@"html %ld %@%@ ct=%@",
+                               (long)status, url.host ?: @"", url.path ?: @"", ct];
+                if (m.length > 100) m = [m substringToIndex:100];
                 [weakSelf evalJS:[NSString stringWithFormat:@"window.__dgLog&&window.__dgLog('net',%@);",
                                   DGJSQuote(m)]];
             }
