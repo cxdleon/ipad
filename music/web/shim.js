@@ -11,6 +11,11 @@
 (function () {
   'use strict';
 
+  /* The native host injects this file at document start; a plain browser also
+     loads it via <script>. Make the second run a no-op. */
+  if (window.__dgShimReady) return;
+  window.__dgShimReady = true;
+
   /* ---------- compact, dependency-free MD5 ---------- */
   function md5(str) {
     var utf8 = unescape(encodeURIComponent(String(str)));
@@ -64,6 +69,11 @@
     if (h) { h.postMessage(obj); return; }
     /* desktop preview harness (never present inside the app bundle) */
     if (typeof window.__devBridge === 'function') { window.__devBridge(obj); return; }
+    if (window.parent && window.parent !== window &&
+        typeof window.parent.__dgMockBridge === 'function') {
+      window.parent.__dgMockBridge(obj, window);
+      return;
+    }
     /* preview race: the harness attaches after the iframe boots */
     obj.__tries = (obj.__tries || 0) + 1;
     if (obj.__tries <= 25) {

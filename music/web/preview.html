@@ -6,36 +6,52 @@
 <title>东哥音乐网 · 界面预览</title>
 <style>
   html, body { height: 100%; margin: 0; background: #07090d; }
-  #frame {
-    position: fixed; inset: 0; width: 100%; height: 100%;
-    border: 0; background: #0b0e14;
-  }
+  #frame { position: fixed; inset: 0; width: 100%; height: 100%; border: 0; background: #0b0e14; }
   #tip {
-    position: fixed; left: 12px; top: 12px; z-index: 99;
+    position: fixed; left: 50%; transform: translateX(-50%); top: 14px; z-index: 99;
     padding: 6px 12px; border-radius: 8px;
     background: rgba(255, 193, 7, .14); color: #ffd45e;
     border: 1px solid rgba(255, 193, 7, .3);
     font: 11px/1.5 -apple-system, "PingFang SC", sans-serif;
     pointer-events: none;
+    animation: tipOut .5s ease 4s forwards;
   }
+  @keyframes tipOut { to { opacity: 0; visibility: hidden; } }
 </style>
 </head>
 <body>
 <div id="tip">预览模式 · 模拟数据（真机走真实接口）</div>
 <iframe id="frame" src="index.html"></iframe>
 <script>
-/* Inject the mock native bridge into the iframe before its scripts run. */
-var frame = document.getElementById('frame');
+/* ------------------------------------------------------------------
+ * Mock native bridge. Defined on the parent BEFORE the iframe loads,
+ * so the child's shim.js can find it synchronously at parse time.
+ * ------------------------------------------------------------------ */
+var SAMPLE = null;
+function silentWav() {
+  if (SAMPLE) return SAMPLE;
+  var sr = 8000, sec = 45, n = sr * sec;
+  var buf = new ArrayBuffer(44 + n * 2), v = new DataView(buf);
+  function w(o, s) { for (var i = 0; i < s.length; i++) v.setUint8(o + i, s.charCodeAt(i)); }
+  w(0, 'RIFF'); v.setUint32(4, 36 + n * 2, true); w(8, 'WAVE'); w(12, 'fmt ');
+  v.setUint32(16, 16, true); v.setUint16(20, 1, true); v.setUint16(22, 1, true);
+  v.setUint32(24, sr, true); v.setUint32(28, sr * 2, true);
+  v.setUint16(32, 2, true); v.setUint16(34, 16, true);
+  w(36, 'data'); v.setUint32(40, n * 2, true);
+  SAMPLE = URL.createObjectURL(new Blob([buf], { type: 'audio/wav' }));
+  return SAMPLE;
+}
+
+var NAMES = ['晴天', '孤勇者', '起风了', '海底', '告白气球', '夜曲', '稻香', '简单爱', '七里香', '富士山下'];
+var ARTISTS = ['周杰伦', '陈奕迅', '林俊杰', '邓紫棋', '李荣浩', '毛不易', '薛之谦', '张学友'];
 
 function tracks(prefix, n) {
-  var names = ['晴天', '孤勇者', '起风了', '海底', '告白气球', '夜曲', '稻香', '简单爱', '七里香', '富士山下'];
-  var artists = ['周杰伦', '陈奕迅', '林俊杰', '邓紫棋', '李荣浩', '毛不易', '薛之谦', '张学友'];
   var out = [];
   for (var i = 0; i < n; i++) {
     out.push({
       id: 1000 + i + prefix.length * 100,
-      name: prefix + ' · ' + names[i % names.length],
-      artists: [{ name: artists[i % artists.length] }],
+      name: prefix + ' · ' + NAMES[i % NAMES.length],
+      artists: [{ name: ARTISTS[i % ARTISTS.length] }],
       album: { name: '专辑 ' + (i + 1) },
       duration: 180000 + i * 7000
     });
@@ -43,7 +59,8 @@ function tracks(prefix, n) {
   return out;
 }
 
-function mockBridge(msg) {
+window.__dgMockBridge = function (msg, w) {
+  w = w || window;
   if (msg.op === 'http') {
     var u = String(msg.url), body = '{}';
     if (u.indexOf('playlist/detail') >= 0) {
@@ -69,29 +86,62 @@ function mockBridge(msg) {
     } else if (u.indexOf('client_search_cp') >= 0) {
       body = JSON.stringify({ data: { song: { list: [] } } });
     }
-    setTimeout(function () { window.__resp(msg.id, true, 200, '{}', body); }, 200);
-  } else if (msg.op === 'result') {
-    setTimeout(function () {
-      window.__onUrl(msg.id, 'https://www.soundhelix.com/examples/mp3/SoundHelix-Song-1.mp3');
-    }, 500);
-  } else if (msg.op === 'download') {
+    setTimeout(function () { if (w.__resp) w.__resp(msg.id, true, 200, '{}', body); }, 160);
+    return;
+  }
+  if (msg.op === 'result') {
+    setTimeout(function () { if (w.__onUrl) w.__onUrl(msg.id, silentWav()); }, 420);
+    return;
+  }
+  if (msg.op === 'download') {
     var pct = 0;
     var t = setInterval(function () {
       pct += 20;
-      window.__onProgress(msg.id, pct);
-      if (pct >= 100) { clearInterval(t); window.__onDownload(msg.id, true, msg.name); }
-    }, 220);
-  } else if (msg.op === 'store') {
+      if (w.__onProgress) w.__onProgress(msg.id, pct);
+      if (pct >= 100) {
+        clearInterval(t);
+        if (w.__onDownload) w.__onDownload(msg.id, true, msg.name);
+      }
+    }, 200);
+    return;
+  }
+  if (msg.op === 'store') {
     try { localStorage.setItem('dg_preview_state', msg.json); } catch (e) {}
   }
-}
+};
+
+var frame = document.getElementById('frame');
 
 frame.addEventListener('load', function () {
   var w = frame.contentWindow;
-  w.__devBridge = mockBridge;
   try {
+    /* Playback: resolve every request to a locally generated silent track so
+       the player UI (progress, next/prev, modes) is fully exercisable. */
+    w.__invoke = function (id, source, quality, info) {
+      setTimeout(function () { if (w.__onUrl) w.__onUrl(id, silentWav()); }, 380);
+    };
     var saved = localStorage.getItem('dg_preview_state');
     if (saved && w.__initStore) w.__initStore(saved);
+
+    /* Debug hooks for headless screenshots: preview.html#tab=search / #play */
+    var q = (location.hash || '').replace(/^#/, '');
+    if (q.indexOf('tab=') === 0) {
+      setTimeout(function () {
+        var btn = frame.contentDocument.querySelector('.tabbar [data-tab="' + q.slice(4) + '"]');
+        if (btn) btn.click();
+      }, 350);
+    } else if (q === 'play') {
+      setTimeout(function () {
+        var b = frame.contentDocument.querySelector('#newSongs .s-ops button[data-act="play"]');
+        if (b) b.click();
+      }, 700);
+    } else if (q === 'full') {
+      setTimeout(function () {
+        var b = frame.contentDocument.querySelector('#newSongs .s-ops button[data-act="play"]');
+        if (b) b.click();
+        setTimeout(function () { var m = frame.contentDocument.querySelector('#miniOpen'); if (m) m.click(); }, 1600);
+      }, 600);
+    }
   } catch (e) {}
 });
 </script>

@@ -98,7 +98,8 @@ button { border: 0; background: none; color: inherit; cursor: pointer; }
 .srcbar { margin-bottom: 18px; }
 
 /* charts */
-.chart-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(230px, 1fr)); gap: 12px; }
+.chart-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 12px; }
+@media (min-width: 1000px) { .chart-grid { grid-template-columns: repeat(4, minmax(0, 1fr)); } }
 .chart-card {
   padding: 14px 15px; border-radius: 14px;
   background: #141a26; border: 1px solid #212b3c;
@@ -135,7 +136,7 @@ button { border: 0; background: none; color: inherit; cursor: pointer; }
   border-radius: 8px;
 }
 .song-row:active { background: rgba(77, 208, 193, .07); }
-.song-list.compact .song-row { grid-template-columns: 34px minmax(0, 2fr) minmax(0, 1.2fr) 100px; }
+.song-list.compact .song-row { grid-template-columns: 34px minmax(0, 2fr) minmax(0, 1.2fr) 54px 100px; }
 .song-row .idx { color: #5f6d84; font-size: 11px; text-align: center; font-variant-numeric: tabular-nums; }
 .song-row .s-main { min-width: 0; }
 .song-row .s-name {
@@ -289,12 +290,12 @@ button.primary:active { opacity: .8; }
 .full-body {
   position: relative; z-index: 2;
   flex: 1; min-height: 0;
-  display: flex; flex-direction: column; align-items: center;
+  display: flex; flex-direction: column; align-items: center; justify-content: center;
   padding: 6px 26px 0;
   overflow-y: auto;
 }
 .full-cover {
-  width: min(46vw, 260px); height: min(46vw, 260px);
+  width: min(58vw, 320px); height: min(58vw, 320px);
   border-radius: 50%;
   display: flex; align-items: center; justify-content: center;
   font-size: 64px; color: rgba(8, 19, 26, .75);
@@ -395,6 +396,6 @@ input[type=range]::-webkit-slider-thumb {
   .hero-disc { width: 56px; height: 56px; flex-basis: 56px; font-size: 24px; }
   .song-row { grid-template-columns: 26px minmax(0, 1.7fr) 104px; }
   .song-row .s-artist, .song-row .s-dur { display: none; }
-  .song-list.compact .song-row { grid-template-columns: 26px minmax(0, 1.9fr) 104px; }
+  .song-list.compact .song-row { grid-template-columns: 26px minmax(0, 1.9fr) 96px; }
   .full-cover { width: 54vw; height: 54vw; font-size: 52px; }
 }

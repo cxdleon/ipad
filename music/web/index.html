@@ -9,6 +9,11 @@
 </head>
 <body>
 
+<!-- On device this file is injected natively at document start (WKUserScript).
+     The tag below makes the same bridge available when the page is opened in a
+     plain browser (desktop preview); shim.js self-guards against double init. -->
+<script src="shim.js"></script>
+
 <div id="app">
   <header class="appbar">
     <div class="ab-left">

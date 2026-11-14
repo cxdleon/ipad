@@ -411,7 +411,7 @@
     var p = S.pending[id];
     if (!p) return;
     delete S.pending[id];
-    if (!url || !/^https?:\/\//i.test(url)) {
+    if (!url || !/^(https?|blob|data):/i.test(url)) {
       status('暂未取到可用链接');
       toast('无法播放该链接');
       return;
@@ -692,6 +692,7 @@
         '<div class="idx">' + (i + 1) + '</div>' +
         '<div class="s-main"><span class="s-name">' + esc(d.song.name) + '</span>' +
         '<span class="s-sub">' + esc(d.song.singer || '') + ' · ' + sub + '</span></div>' +
+        '<div class="s-artist"></div><div class="s-dur"></div>' +
         '<div class="s-ops">' +
           (d.status === 'done' ? '<button data-act="play">&#9654;</button>' : '') +
           '<button data-act="more">&#8943;</button>' +
@@ -708,6 +709,7 @@
             '<div class="idx">' + (on ? '&#9835;' : (i + 1)) + '</div>' +
             '<div class="s-main"><span class="s-name" style="' + (on ? 'color:#6de3cd' : '') + '">' + esc(s.name) + '</span>' +
             '<span class="s-sub">' + esc(s.singer || '') + '</span></div>' +
+            '<div class="s-artist"></div><div class="s-dur"></div>' +
             '<div class="s-ops"><button data-act="play">&#9654;</button></div></div>';
         }).join('')
       : '<div class="empty">播放列表是空的</div>';
@@ -733,6 +735,9 @@
     $('btnFavCur').innerHTML = s && isFav(s) ? '&#9829;' : '&#9825;';
     $('btnFavCur').style.color = s && isFav(s) ? '#ff7b8a' : '';
     $('fullCover').classList.toggle('spin', !!S.playing);
+    if (!isFinite(audio.duration) || !audio.duration) {
+      $('totTime').textContent = s ? fmt(s.dur) : '0:00';
+    }
     if (s) $('fullLyric').textContent = '暂无歌词';
     $('fullComments').innerHTML = '暂时没有评论<br><small>或该歌曲不提供评论</small>';
   }
