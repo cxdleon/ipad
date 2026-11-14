@@ -4,6 +4,10 @@ name: iPadOS 13 Minimal Test IPA
 # No Flutter, no CocoaPods, no Xcode project file - just clang + zip, a few seconds.
 on:
   workflow_dispatch:
+  # Push to main also starts the build, so the first push produces the IPA
+  # without having to click "Run workflow" in the Actions tab.
+  push:
+    branches: [ main ]
 
 jobs:
   build-test-ipa:
