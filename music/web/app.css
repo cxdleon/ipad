@@ -74,12 +74,12 @@ button { border: 0; background: none; color: inherit; cursor: pointer; }
 }
 @media (min-width: 700px) { .hero { height: 264px; } }
 .hero-img {
-  position: absolute; inset: 0;
+  position: absolute; top: 0; right: 0; bottom: 0; left: 0;
   width: 100%; height: 100%;
   object-fit: cover; display: block;
 }
 .hero-fade {
-  position: absolute; inset: 0;
+  position: absolute; top: 0; right: 0; bottom: 0; left: 0;
   background: linear-gradient(180deg, rgba(11, 14, 20, 0) 42%, rgba(11, 14, 20, .55) 72%, rgba(11, 14, 20, .92) 100%);
 }
 .hero-tags {
@@ -307,21 +307,30 @@ button.primary:active { opacity: .8; }
 .tab.active { color: #6de3cd; }
 
 /* ============ full player ============ */
+/* iOS 13 WebKit 不支持 inset 简写（Safari 14.1 起才有），
+   必须展开成 top/right/bottom/left，否则整条声明被丢弃，
+   #full 会退化成「无偏移 + 收缩宽度」，打开后停在文档流末尾（屏幕外）。 */
 .full {
-  position: fixed; inset: 0; z-index: 40;
+  position: fixed; top: 0; right: 0; bottom: 0; left: 0;
+  width: 100%; height: 100%;
+  z-index: 40;
   display: flex; flex-direction: column;
   transform: translateY(100%);
+  -webkit-transform: translateY(100%);
   visibility: hidden;
   transition: transform .28s cubic-bezier(.32, .72, 0, 1), visibility 0s linear .28s;
+  -webkit-transition: -webkit-transform .28s cubic-bezier(.32, .72, 0, 1), visibility 0s linear .28s;
   background: #0b0e14;
 }
 .full.open {
   transform: translateY(0);
+  -webkit-transform: translateY(0);
   visibility: visible;
   transition: transform .28s cubic-bezier(.32, .72, 0, 1), visibility 0s;
+  -webkit-transition: -webkit-transform .28s cubic-bezier(.32, .72, 0, 1), visibility 0s;
 }
 .full-bg {
-  position: absolute; inset: 0;
+  position: absolute; top: 0; right: 0; bottom: 0; left: 0;
   background:
     radial-gradient(circle at 20% 0%, rgba(58, 167, 232, .20), transparent 55%),
     radial-gradient(circle at 85% 15%, rgba(93, 227, 192, .14), transparent 50%),
@@ -458,7 +467,9 @@ input[type=range]::-webkit-slider-thumb {
 
 /* ============ sheet ============ */
 .sheet {
-  position: fixed; inset: 0; z-index: 50;
+  position: fixed; top: 0; right: 0; bottom: 0; left: 0;
+  width: 100%; height: 100%;
+  z-index: 50;
   background: rgba(0, 0, 0, .5);
   display: flex; align-items: flex-end;
   opacity: 0; pointer-events: none; transition: opacity .2s;
@@ -502,3 +513,37 @@ input[type=range]::-webkit-slider-thumb {
   .song-list.compact .song-row { grid-template-columns: 26px minmax(0, 1.9fr) 96px; }
   .full-cover { width: 54vw; height: 54vw; font-size: 52px; }
 }
+
+/* ============ iOS 13 flex gap 兜底 ============ */
+/* iOS 13 的 WebKit 不支持 flex 的 gap（Safari 14.1 起才有），grid 的 gap 是支持的。
+   index.html 头部会检测一次，不支持时给 <html> 加 .no-flexgap，
+   下面用 margin 把间距补回来；支持 gap 的浏览器完全不受影响。
+   注意：.song-row / .diag-row / .chart-grid / .pl-grid 都是 grid，无需处理。 */
+
+.no-flexgap .ab-left > * + * { margin-left: 11px; }
+.no-flexgap .head-actions > * + * { margin-left: 12px; }
+
+/* 会换行的容器用「容器负边距 + 子项正边距」，避免换行后首项缩进 */
+.no-flexgap .hero-tags { margin-left: -7px; margin-bottom: -7px; }
+.no-flexgap .hero-tags > * { margin-left: 7px; margin-bottom: 7px; }
+.no-flexgap .chips { margin-left: -8px; margin-bottom: -8px; }
+.no-flexgap .chips > * { margin-left: 8px; margin-bottom: 8px; }
+
+.no-flexgap .song-row .s-ops > * + * { margin-left: 5px; }
+.no-flexgap .searchbar > * + * { margin-left: 8px; }
+.no-flexgap .pl-list > * + * { margin-top: 9px; }
+.no-flexgap .pl-row > * + * { margin-left: 12px; }
+.no-flexgap .detail-head > * + * { margin-left: 10px; }
+.no-flexgap .sheet-head > * + * { margin-left: 10px; }
+
+/* 底栏播放条 */
+.no-flexgap .mini > * + * { margin-left: 8px; }
+.no-flexgap .mini-open > * + * { margin-left: 11px; }
+.no-flexgap .tab > * + * { margin-top: 2px; }
+
+/* 播放页 */
+.no-flexgap .full-top > * + * { margin-left: 12px; }
+.no-flexgap .full-meta > * + * { margin-left: 12px; }
+.no-flexgap .full-extras > * + * { margin-left: 10px; }
+.no-flexgap .progress-row > * + * { margin-left: 10px; }
+.no-flexgap .timer-list > * + * { margin-top: 8px; }

@@ -1521,21 +1521,57 @@
   function openFull() {
     var f = $('full');
     if (!f) { window.__dgLog('ui', 'openFull: #full missing'); return; }
+    /* 兜底：iOS 13 WebKit 不认 CSS 的 inset 简写，若样式表里那条被丢弃，
+       #full 就会变成「无偏移 + 收缩宽度」，打开后停在文档流末尾（屏幕外），
+       表现就是「点了没反应」。这里用内联样式再钉一次铺满视口。 */
+    var st = f.style;
+    st.position = 'fixed';
+    st.top = '0'; st.right = '0'; st.bottom = '0'; st.left = '0';
+    st.width = '100%'; st.height = '100%';
     f.classList.add('open');
+
     var vis = '';
     try { vis = window.getComputedStyle(f).visibility; } catch (e) {}
     window.__dgLog('ui', 'openFull open=' + f.classList.contains('open') + ' vis=' + vis);
+
+    /* 过渡跑完再量一次真实几何，判断「打开了但不在视口内」这类问题 */
+    setTimeout(function () {
+      var r = null, vw = 0, vh = 0;
+      try { r = f.getBoundingClientRect(); vw = window.innerWidth; vh = window.innerHeight; } catch (e) {}
+      if (!r) { window.__dgLog('ui', 'openFull rect=?'); return; }
+      var onScreen = (r.top < vh - 40) && (r.top > -40) && r.width > 40;
+      window.__dgLog('ui', 'openFull rect=' + Math.round(r.left) + ',' + Math.round(r.top) +
+        ' ' + Math.round(r.width) + 'x' + Math.round(r.height) +
+        ' vp=' + vw + 'x' + vh + ' onScreen=' + onScreen);
+    }, 360);
+
     updateFull();
     loadLyrics(S.current);
     paintLyric(true);
   }
 
+  /* 底栏 → 播放页：双通道绑定。
+     ① 直接绑真按钮 #miniOpen（iOS 对 <button> 的 click 合成最可靠）；
+     ② 再在 #mini 上兜一层冒泡，覆盖右侧 14px 内边距等按钮外的空白区。
+     按钮那一路 stopPropagation，不会重复触发。 */
   $('mini').addEventListener('click', function (e) {
-    if (e.target.closest('.mini-btn')) return;
-    window.__dgLog('ui', 'mini tap');
+    if (e.target.closest('.mini-btn') || e.target.closest('.mini-open')) return;
+    window.__dgLog('ui', 'mini tap (container)');
     if (!S.current) { toast('先选一首歌'); return; }
     openFull();
   });
+
+  (function () {
+    var mo = $('miniOpen');
+    if (!mo) { window.__dgLog('ui', 'miniOpen 未找到'); return; }
+    mo.addEventListener('click', function (e) {
+      e.preventDefault();
+      e.stopPropagation();
+      window.__dgLog('ui', 'mini tap (button)');
+      if (!S.current) { toast('先选一首歌'); return; }
+      openFull();
+    });
+  })();
 
   $('btnCloseFull').addEventListener('click', function () { $('full').classList.remove('open'); });
   $('miniPlay').addEventListener('click', togglePlay);

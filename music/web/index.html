@@ -6,6 +6,25 @@
 <meta name="apple-mobile-web-app-capable" content="yes">
 <title>东哥音乐网</title>
 <link rel="stylesheet" href="app.css">
+<script>
+/* iOS 13 的 WebKit 没有 flex 的 gap（Safari 14.1 才加），但 grid 的 gap 是支持的。
+   这里量一次：column 方向两个 10px 子项 + gap:4px，支持则高 24，不支持则 20。
+   不支持时给 <html> 打上 no-flexgap，由 app.css 末尾的兜底规则用 margin 补间距。 */
+(function () {
+  try {
+    var d = document.createElement('div');
+    d.style.cssText = 'display:flex;flex-direction:column;gap:4px;position:absolute;' +
+                      'top:-9999px;left:-9999px;width:10px;visibility:hidden';
+    var a = document.createElement('div'), b = document.createElement('div');
+    a.style.cssText = b.style.cssText = 'height:10px';
+    d.appendChild(a); d.appendChild(b);
+    document.documentElement.appendChild(d);
+    var ok = d.offsetHeight >= 24;
+    document.documentElement.removeChild(d);
+    if (!ok) document.documentElement.className += ' no-flexgap';
+  } catch (e) {}
+})();
+</script>
 </head>
 <body>
 
