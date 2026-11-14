@@ -60,7 +60,15 @@
   }
 
   function post(obj) {
-    window.webkit.messageHandlers.iosBridge.postMessage(obj);
+    var h = window.webkit && window.webkit.messageHandlers && window.webkit.messageHandlers.iosBridge;
+    if (h) { h.postMessage(obj); return; }
+    /* desktop preview harness (never present inside the app bundle) */
+    if (typeof window.__devBridge === 'function') { window.__devBridge(obj); return; }
+    /* preview race: the harness attaches after the iframe boots */
+    obj.__tries = (obj.__tries || 0) + 1;
+    if (obj.__tries <= 25) {
+      setTimeout(function () { post(obj); }, 100);
+    }
   }
 
   window.AndroidBridge = {

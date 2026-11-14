@@ -1,0 +1,99 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>东哥音乐网 · 界面预览</title>
+<style>
+  html, body { height: 100%; margin: 0; background: #07090d; }
+  #frame {
+    position: fixed; inset: 0; width: 100%; height: 100%;
+    border: 0; background: #0b0e14;
+  }
+  #tip {
+    position: fixed; left: 12px; top: 12px; z-index: 99;
+    padding: 6px 12px; border-radius: 8px;
+    background: rgba(255, 193, 7, .14); color: #ffd45e;
+    border: 1px solid rgba(255, 193, 7, .3);
+    font: 11px/1.5 -apple-system, "PingFang SC", sans-serif;
+    pointer-events: none;
+  }
+</style>
+</head>
+<body>
+<div id="tip">预览模式 · 模拟数据（真机走真实接口）</div>
+<iframe id="frame" src="index.html"></iframe>
+<script>
+/* Inject the mock native bridge into the iframe before its scripts run. */
+var frame = document.getElementById('frame');
+
+function tracks(prefix, n) {
+  var names = ['晴天', '孤勇者', '起风了', '海底', '告白气球', '夜曲', '稻香', '简单爱', '七里香', '富士山下'];
+  var artists = ['周杰伦', '陈奕迅', '林俊杰', '邓紫棋', '李荣浩', '毛不易', '薛之谦', '张学友'];
+  var out = [];
+  for (var i = 0; i < n; i++) {
+    out.push({
+      id: 1000 + i + prefix.length * 100,
+      name: prefix + ' · ' + names[i % names.length],
+      artists: [{ name: artists[i % artists.length] }],
+      album: { name: '专辑 ' + (i + 1) },
+      duration: 180000 + i * 7000
+    });
+  }
+  return out;
+}
+
+function mockBridge(msg) {
+  if (msg.op === 'http') {
+    var u = String(msg.url), body = '{}';
+    if (u.indexOf('playlist/detail') >= 0) {
+      body = JSON.stringify({ result: { tracks: tracks('榜单', 10) } });
+    } else if (u.indexOf('music.163.com/api/search') >= 0) {
+      body = JSON.stringify({ result: { songs: tracks('网易', 8) } });
+    } else if (u.indexOf('kugou') >= 0) {
+      body = JSON.stringify({ data: { lists: tracks('酷狗', 8).map(function (t, i) {
+        return { FileHash: 'H' + i, SongName: t.name, SingerName: t.artists[0].name,
+                 AlbumName: t.album.name, Duration: Math.round(t.duration / 1000) };
+      }) } });
+    } else if (u.indexOf('kuwo') >= 0) {
+      body = "{'abslist':[" + tracks('酷我', 8).map(function (t, i) {
+        return "{'MUSICRID':'MUSIC_" + (5000 + i) + "','SONGNAME':'" + t.name +
+               "','ARTIST':'" + t.artists[0].name + "','ALBUM':'" + t.album.name +
+               "','DURATION':" + Math.round(t.duration / 1000) + "}";
+      }).join(',') + "]}";
+    } else if (u.indexOf('search_all') >= 0) {
+      body = JSON.stringify({ songResultData: { result: tracks('咪咕', 8).map(function (t, i) {
+        return { id: 'M' + i, copyrightId: 'C' + i, contentId: 'CT' + i, name: t.name,
+                 singers: t.artists, albums: [{ name: t.album.name }] };
+      }) } });
+    } else if (u.indexOf('client_search_cp') >= 0) {
+      body = JSON.stringify({ data: { song: { list: [] } } });
+    }
+    setTimeout(function () { window.__resp(msg.id, true, 200, '{}', body); }, 200);
+  } else if (msg.op === 'result') {
+    setTimeout(function () {
+      window.__onUrl(msg.id, 'https://www.soundhelix.com/examples/mp3/SoundHelix-Song-1.mp3');
+    }, 500);
+  } else if (msg.op === 'download') {
+    var pct = 0;
+    var t = setInterval(function () {
+      pct += 20;
+      window.__onProgress(msg.id, pct);
+      if (pct >= 100) { clearInterval(t); window.__onDownload(msg.id, true, msg.name); }
+    }, 220);
+  } else if (msg.op === 'store') {
+    try { localStorage.setItem('dg_preview_state', msg.json); } catch (e) {}
+  }
+}
+
+frame.addEventListener('load', function () {
+  var w = frame.contentWindow;
+  w.__devBridge = mockBridge;
+  try {
+    var saved = localStorage.getItem('dg_preview_state');
+    if (saved && w.__initStore) w.__initStore(saved);
+  } catch (e) {}
+});
+</script>
+</body>
+</html>
