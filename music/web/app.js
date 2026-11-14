@@ -1515,20 +1515,27 @@
     toast(this.options[this.selectedIndex].text);
   });
 
-  /* mini / full player — tapping anywhere on the bar opens the player page,
-     except on the transport buttons. */
-  $('mini').addEventListener('click', function (e) {
-    if (e.target.closest('button')) return;
-    if (!S.current) { toast('先选一首歌'); return; }
-    openFull();
-  });
-
+  /* mini / full player. The tappable region is a real <button>: iOS only
+     reliably synthesises `click` for interactive elements, so a plain div
+     could swallow the tap. Transport buttons are excluded explicitly. */
   function openFull() {
-    $('full').classList.add('open');
+    var f = $('full');
+    if (!f) { window.__dgLog('ui', 'openFull: #full missing'); return; }
+    f.classList.add('open');
+    var vis = '';
+    try { vis = window.getComputedStyle(f).visibility; } catch (e) {}
+    window.__dgLog('ui', 'openFull open=' + f.classList.contains('open') + ' vis=' + vis);
     updateFull();
     loadLyrics(S.current);
     paintLyric(true);
   }
+
+  $('mini').addEventListener('click', function (e) {
+    if (e.target.closest('.mini-btn')) return;
+    window.__dgLog('ui', 'mini tap');
+    if (!S.current) { toast('先选一首歌'); return; }
+    openFull();
+  });
 
   $('btnCloseFull').addEventListener('click', function () { $('full').classList.remove('open'); });
   $('miniPlay').addEventListener('click', togglePlay);

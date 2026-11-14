@@ -184,13 +184,16 @@
 
   <!-- mini player -->
   <div id="mini" class="mini hidden">
-    <div class="mini-cover" id="miniCover">&#9834;</div>
-    <div class="mini-text" id="miniOpen">
-      <strong id="miniTitle">未播放</strong>
-      <small id="miniArtist">选一首歌开始</small>
-    </div>
-    <button id="miniPlay" class="mini-btn">&#9654;</button>
-    <button id="miniNext" class="mini-btn">&#9197;</button>
+    <button type="button" class="mini-open" id="miniOpen">
+      <img class="mini-cover" src="logo-mark.png" alt="">
+      <span class="mini-text">
+        <strong id="miniTitle">未播放</strong>
+        <small id="miniArtist">选一首歌开始</small>
+      </span>
+      <span class="mini-cue">&#9650;</span>
+    </button>
+    <button type="button" id="miniPlay" class="mini-btn">&#9654;</button>
+    <button type="button" id="miniNext" class="mini-btn">&#9197;</button>
   </div>
 
   <!-- bottom tabs -->
