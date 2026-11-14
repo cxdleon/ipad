@@ -24,7 +24,11 @@ echo "==> [3/4] 校验最低系统版本"
 # 真正的 ABI 下限在 Mach-O 的 LC_BUILD_VERSION / minos，比 Info.plist 更硬。
 MINOS=$(otool -l TestApp | awk '/LC_BUILD_VERSION/{f=1} f && /minos/{print $2; exit}')
 echo "Mach-O minos = ${MINOS:-未读到}"
-if [[ -n "$MINOS" && "$MINOS" != "13.0" ]]; then
+if [[ -z "$MINOS" ]]; then
+  echo "::error::无法从 Mach-O 读取 LC_BUILD_VERSION/minos，编译产物异常。" >&2
+  exit 1
+fi
+if [[ "$MINOS" != "13.0" ]]; then
   echo "::error::Mach-O minos 是 $MINOS，不是 13.0，iPadOS 13.5.1 可能装不上。" >&2
   exit 1
 fi
