@@ -129,6 +129,10 @@ window.__dgMockBridge = function (msg, w) {
   if (msg.op === 'store') {
     try { localStorage.setItem('dg_preview_state', msg.json); } catch (e) {}
   }
+  if (msg.op === 'settimer') {
+    /* Mirror the native NSTimer arm so the preview can be inspected. */
+    window.__dgTimerMock = { until: msg.until, endstop: msg.endstop };
+  }
 };
 
 var frame = document.getElementById('frame');

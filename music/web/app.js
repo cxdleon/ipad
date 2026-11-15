@@ -120,6 +120,7 @@
      In a plain browser (preview harness) there is no native handler, so the
      <audio> element stays in charge. */
   var NAT = { on: false, t: 0, dur: 0, buf: 0, ready: false };
+  var shortTried = {};   /* one cross-source retry per song on a truncated clip */
 
   function nativeTransport() {
     return !!(window.DG && typeof window.DG.play === 'function' &&
@@ -180,8 +181,28 @@
 
   /* Native player -> UI */
   window.__player = function (ev) {
-    if (!ev || !NAT.on) return;
+    if (!ev) return;
     var k = ev.ev;
+
+    /* The native NSTimer fires even when WKWebView's JS was frozen (locked
+       screen / background). Handle these before the NAT.on guard so a torn
+       down transport can never swallow a sleep-timer event. */
+    if (k === 'timerfired') {
+      window.__dgLog('timer', 'native fired');
+      finishTimer('定时播放结束');
+      return;
+    }
+    if (k === 'endstop') {
+      window.__dgLog('timer', 'native end-of-track stop');
+      S.timerEndOfTrack = false;
+      saveState();
+      S.playing = false;
+      renderTimer(); updateMini(); updateFull();
+      status('本曲已结束，定时停止');
+      toast('本曲已结束，定时停止');
+      return;
+    }
+    if (!NAT.on) return;
 
     if (k === 'time') {
       NAT.t = ev.t || 0;
@@ -219,20 +240,39 @@
       return;
     }
     if (k === 'ended') {
-      window.__dgLog('audio', 'ended at ' + NAT.t.toFixed(1) + 's dur=' + NAT.dur.toFixed(1) + 's');
-      var cur = S.current;
-      var expect = (cur && cur.dur) ? cur.dur : 0;
-      /* A stream that ends far short of the track's own metadata length is a
-         preview/truncated file, not the real song: try another source instead
-         of silently going quiet. */
-      if (expect > 60 && NAT.dur > 0 && NAT.dur < expect * 0.7) {
-        window.__dgLog('audio', 'SHORT stream ' + NAT.dur.toFixed(0) + 's vs expected ' + expect.toFixed(0) + 's');
-        if (cur) autoFallback(cur, 'short');
-        return;
+      try {
+        window.__dgLog('audio', 'ended at ' + NAT.t.toFixed(1) + 's dur=' + NAT.dur.toFixed(1) + 's');
+        var cur = S.current;
+        var expect = (cur && cur.dur) ? cur.dur : 0;
+        /* Only a genuinely tiny clip (<30s) counts as a preview. The old
+           "dur < expect*0.7" ratio mis-fired whenever the metadata duration
+           was in the wrong unit, which swallowed the next-track transition
+           on perfectly good songs. The native AVPlayer reports real durations
+           now, so this is only a last-resort guard. */
+        if (expect > 60 && NAT.dur > 0 && NAT.dur < 30 && NAT.dur < expect * 0.5) {
+          window.__dgLog('audio', 'SHORT stream ' + NAT.dur.toFixed(0) + 's vs expected ' + expect.toFixed(0) + 's');
+          var sk = cur ? songKey(cur) : 'x';
+          if (!shortTried[sk]) {
+            shortTried[sk] = 1;
+            autoFallback(cur, 'short');
+            /* If cross-source lookup finds nothing, still advance the list. */
+            setTimeout(function () {
+              if (S.current === cur && !S.playing) {
+                window.__dgLog('audio', 'fallback gave up, advancing');
+                next(true);
+              }
+            }, 4500);
+          } else next(true);
+          return;
+        }
+        if (timerBlocksNext()) return;
+        if (S.mode === 'single') { seekTo(0); window.DG.resume(); return; }
+        window.__dgLog('audio', 'advance mode=' + S.mode + ' qi=' + S.qi + '/' + S.queue.length);
+        next(true);
+      } catch (e) {
+        window.__dgLog('audio', 'ended handler error ' + ((e && e.message) || e));
+        try { next(true); } catch (e2) {}
       }
-      if (timerBlocksNext()) return;
-      if (S.mode === 'single') { seekTo(0); window.DG.resume(); return; }
-      next(true);
       return;
     }
     if (k === 'error') {
@@ -276,6 +316,17 @@
     if (st) st.textContent = (S.timerUntil || S.timerEndOfTrack) ? timerLabel() : '未开启';
   }
 
+  /* Arm the native NSTimer too. JS setInterval alone is not enough: iOS 13
+     freezes WKWebView timers while the screen is locked or the app is in the
+     background, which is exactly when a sleep timer matters. */
+  function armNativeTimer() {
+    try {
+      if (window.DG && typeof window.DG.setTimer === 'function') {
+        window.DG.setTimer(S.timerUntil || 0, !!S.timerEndOfTrack);
+      }
+    } catch (e) { window.__dgLog('timer', 'arm failed ' + ((e && e.message) || e)); }
+  }
+
   function setTimer(min) {
     if (min === -1) {
       S.timerUntil = 0; S.timerEndOfTrack = false;
@@ -288,39 +339,52 @@
       S.timerEndOfTrack = false;
       toast(min + ' 分钟后停止播放');
     }
+    timerFiring = 0;
     saveState();
     renderTimer();
+    armNativeTimer();
     var sh = $('timerSheet');
     if (sh) sh.classList.remove('open');
-    window.__dgLog('timer', timerLabel());
+    window.__dgLog('timer', 'set ' + min + ' -> ' + timerLabel() +
+      ' until=' + (S.timerUntil || 0) + ' endstop=' + S.timerEndOfTrack);
+  }
+
+  /* Idempotent: both the JS loop and the native timerfired event may call it. */
+  var timerFiring = 0;
+  function finishTimer(reason) {
+    var now = Date.now();
+    if (now - timerFiring < 1500) return;
+    timerFiring = now;
+    S.timerUntil = 0;
+    S.timerEndOfTrack = false;
+    saveState();
+    pausePlayback();
+    armNativeTimer();
+    renderTimer();
+    status(reason + '，已停止播放');
+    toast(reason);
+    window.__dgLog('timer', 'fired, playback stopped');
   }
 
   function startTimerLoop() {
     setInterval(function () {
       if (!S.timerUntil) return;
-      if (Date.now() >= S.timerUntil) {
-        S.timerUntil = 0;
-        saveState();
-        pausePlayback();
-        renderTimer();
-        status('定时已到，已停止播放');
-        toast('定时播放结束');
-        window.__dgLog('timer', 'fired, playback stopped');
-        return;
-      }
+      if (Date.now() >= S.timerUntil) { finishTimer('定时播放结束'); return; }
       renderTimer();
     }, 1000);
   }
 
-  /* Returns true when the timer consumed the "track finished" event. */
+  /* Browser-preview fallback only. Inside the app the native layer consumes
+     the end-of-track stop and sends `endstop` instead of `ended`. */
   function timerBlocksNext() {
     if (!S.timerEndOfTrack) return false;
     S.timerEndOfTrack = false;
     saveState();
     pausePlayback();
+    armNativeTimer();
     renderTimer();
     toast('本曲已结束，定时停止');
-    window.__dgLog('timer', 'end-of-track stop');
+    window.__dgLog('timer', 'end-of-track stop (js)');
     return true;
   }
 
@@ -329,7 +393,8 @@
   var MODE_TEXT = { list: '列表循环', single: '单曲循环', shuffle: '随机播放' };
 
   function setMode(m) {
-    if (!MODE_TEXT[m] || S.mode === m) return;
+    window.__dgLog('order', 'setMode ' + m + ' (was ' + S.mode + ')');
+    if (!MODE_TEXT[m] || S.mode === m) { renderOrderSeg(); return; }
     S.mode = m;
     var sel = $('setMode');
     if (sel) sel.value = m;
@@ -337,6 +402,7 @@
     renderOrderSeg();
     updateFull();
     toast(MODE_TEXT[m]);
+    window.__dgLog('order', 'mode now ' + S.mode);
   }
 
   function renderOrderSeg() {
@@ -498,6 +564,9 @@
       if (typeof o.timerUntil === 'number') S.timerUntil = o.timerUntil;
       if (o.timerEndOfTrack) S.timerEndOfTrack = true;
     } catch (e) { log('initStore: ' + e.message); }
+    /* The native NSTimer does not survive an app restart; re-arm from persisted
+       state. An already-expired deadline stops playback immediately. */
+    armNativeTimer();
     renderAll();
   };
   function loadLocalFallback() {
@@ -1592,25 +1661,44 @@
     if (audio.paused) audio.play(); else audio.pause();
   }
 
+  /* iOS 13 WebKit does not always synthesise `click` for taps inside a
+     transformed / fixed full-screen layer. Handle touchend as well, with a
+     short de-dupe window so the trailing synthetic click cannot double-fire. */
+  function bindTap(el, fn) {
+    if (!el) return;
+    var lastTouch = 0;
+    el.addEventListener('touchend', function (e) {
+      lastTouch = Date.now();
+      try { fn(e); } catch (err) { window.__dgLog('ui', 'tap err ' + ((err && err.message) || err)); }
+    }, false);
+    el.addEventListener('click', function (e) {
+      if (Date.now() - lastTouch < 700) return;
+      try { fn(e); } catch (err) { window.__dgLog('ui', 'tap err ' + ((err && err.message) || err)); }
+    }, false);
+  }
+
   /* play order */
-  $('orderSeg').addEventListener('click', function (e) {
-    var b = e.target.closest('button[data-mode]');
+  bindTap($('orderSeg'), function (e) {
+    var t = e.target;
+    var b = t && t.closest ? t.closest('button[data-mode]') : null;
     if (!b) return;
+    window.__dgLog('ui', 'order tap ' + b.getAttribute('data-mode'));
     setMode(b.getAttribute('data-mode'));
   });
 
   /* sleep timer */
-  $('btnTimer').addEventListener('click', function () {
+  bindTap($('btnTimer'), function () {
+    window.__dgLog('ui', 'timer tap open sheet');
     renderTimer();
     $('timerSheet').classList.add('open');
   });
-  $('btnCloseTimer').addEventListener('click', function () { $('timerSheet').classList.remove('open'); });
-  $('timerSheet').addEventListener('click', function (e) {
-    if (e.target === $('timerSheet')) $('timerSheet').classList.remove('open');
-  });
-  $('timerSheet').addEventListener('click', function (e) {
-    var b = e.target.closest('.timer-opt');
+  bindTap($('btnCloseTimer'), function () { $('timerSheet').classList.remove('open'); });
+  bindTap($('timerSheet'), function (e) {
+    var t = e.target;
+    if (t === $('timerSheet')) { $('timerSheet').classList.remove('open'); return; }
+    var b = t && t.closest ? t.closest('.timer-opt') : null;
     if (!b) return;
+    window.__dgLog('ui', 'timer tap option ' + b.getAttribute('data-min'));
     setTimer(Number(b.getAttribute('data-min')));
   });
 

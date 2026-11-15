@@ -363,12 +363,14 @@ button.primary:active { opacity: .8; }
 .full-cover.spin { animation: spin 18s linear infinite; }
 @keyframes spin { to { transform: rotate(360deg); } }
 .full-lyric-wrap {
-  position: relative;
+  position: relative; z-index: 1;
   width: 100%; max-width: 560px;
   flex: 1 1 auto;
   min-height: 96px; max-height: 38vh;
   overflow-y: auto;
-  -webkit-overflow-scrolling: touch;
+  /* 故意不开启旧版惯性滚动属性 —— iOS 13 会为它建独立合成层，
+     命中测试会盖住下方 .full-extras 的按钮（表现为「点了没反应」）。
+     iOS 13 的普通 overflow:auto 本身已有惯性滚动。 */
   scroll-behavior: smooth;
   margin: 2px 0 4px;
   -webkit-mask-image: linear-gradient(180deg, transparent 0, #000 14%, #000 86%, transparent 100%);
@@ -388,6 +390,7 @@ button.primary:active { opacity: .8; }
 .lyric-empty { text-align: center; color: #5b6779; font-size: 12px; line-height: 2; padding: 10px 0; }
 
 .full-extras {
+  position: relative; z-index: 5;   /* 始终位于歌词滚动层之上 */
   display: flex; align-items: center; gap: 10px; flex-wrap: wrap;
   justify-content: center; margin: 8px 0 2px;
 }

@@ -118,6 +118,13 @@
     resume: function () { post({ op: 'resume' }); },
     seek: function (t) { post({ op: 'seek', t: Number(t) || 0 }); },
     stop: function () { post({ op: 'stop' }); },
+    /* Sleep timer is armed in the native layer (NSTimer), because WKWebView's
+       JS timers stop firing when the app is backgrounded or the screen locks.
+       until = absolute epoch milliseconds (0 = cancel); endstop = stop when
+       the current AVPlayerItem reaches its end. */
+    setTimer: function (until, endstop) {
+      post({ op: 'settimer', until: Number(until) || 0, endstop: !!endstop });
+    },
     log: function (msg) { post({ op: 'log', msg: String(msg).slice(0, 400) }); }
   };
 })();

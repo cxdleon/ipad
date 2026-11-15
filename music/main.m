@@ -104,6 +104,14 @@ static NSString *DGMediaUA(void) {
 @property (nonatomic, strong) id playerTimeObs;
 @property (nonatomic, assign) float playerLastRate;
 @property (nonatomic, copy) NSString *playerUrl;
+/* Sleep timer lives in the native layer: WKWebView JS timers are frozen when
+   the app is backgrounded / the screen locks, so a JS-only setInterval cannot
+   reliably stop playback. NSTimer keeps running with the audio session. */
+@property (nonatomic, strong) NSTimer *sleepTimer;
+@property (nonatomic, assign) BOOL endOfTrackStop;
+@property (nonatomic, assign) BOOL timerFired;
+- (void)handleSetTimer:(NSDictionary *)b;
+- (void)fireSleepTimer;
 @end
 
 @implementation DGViewController
@@ -167,6 +175,8 @@ static NSString *DGMediaUA(void) {
 
 - (void)dealloc {
     if (_playerTimeObs) [_player removeTimeObserver:_playerTimeObs];
+    [_sleepTimer invalidate];
+    _sleepTimer = nil;
     [[NSNotificationCenter defaultCenter] removeObserver:self];
 }
 
@@ -211,6 +221,7 @@ static NSString *DGMediaUA(void) {
     else if ([op isEqualToString:@"resume"])       { [self handlePlayerResume]; }
     else if ([op isEqualToString:@"seek"])         { [self handlePlayerSeek:b]; }
     else if ([op isEqualToString:@"stop"])         { [self stopPlayer]; }
+    else if ([op isEqualToString:@"settimer"])     { [self handleSetTimer:b]; }
     else if ([op isEqualToString:@"loaded"])       {
         NSLog(@"[DG] source engine ready");
         [self evalJS:@"window.__dgLog&&window.__dgLog('native','engine loaded');"];
@@ -516,8 +527,57 @@ static NSString *DGMediaUA(void) {
     }
 }
 
-- (void)onItemEnded:(NSNotification *)n   { [self pushPlayerEvent:@{@"ev": @"ended"}]; }
+- (void)onItemEnded:(NSNotification *)n {
+    /* "Stop after this track" is honoured here in the native layer. Doing it in
+       JS alone is unreliable: if the JS handler bails out (or the web process
+       is throttled) the item still ends and the app would keep playing the
+       next track. */
+    if (self.endOfTrackStop) {
+        self.endOfTrackStop = NO;
+        [self.sleepTimer invalidate];
+        self.sleepTimer = nil;
+        [self.player pause];
+        [self pushPlayerEvent:@{@"ev": @"endstop"}];
+        return;
+    }
+    [self pushPlayerEvent:@{@"ev": @"ended"}];
+}
 - (void)onItemStalled:(NSNotification *)n { [self pushPlayerEvent:@{@"ev": @"stalled"}]; }
+
+- (void)handleSetTimer:(NSDictionary *)b {
+    [self.sleepTimer invalidate];
+    self.sleepTimer = nil;
+    self.endOfTrackStop = [b[@"endstop"] boolValue];
+    self.timerFired = NO;
+
+    double untilMs = [b[@"until"] doubleValue];
+    if (untilMs <= 0) {
+        [self evalJS:@"window.__dgLog&&window.__dgLog('timer','native timer cleared');"];
+        return;
+    }
+    NSTimeInterval delay = (untilMs / 1000.0) - [[NSDate date] timeIntervalSince1970];
+    if (delay <= 0) { [self fireSleepTimer]; return; }
+
+    __weak typeof(self) weakSelf = self;
+    NSTimer *t = [NSTimer timerWithTimeInterval:delay
+                                        repeats:NO
+                                          block:^(NSTimer *tt) { [weakSelf fireSleepTimer]; }];
+    /* NSRunLoopCommonModes keeps it firing even while a scroll view is tracking. */
+    [[NSRunLoop mainRunLoop] addTimer:t forMode:NSRunLoopCommonModes];
+    self.sleepTimer = t;
+    [self evalJS:[NSString stringWithFormat:
+                  @"window.__dgLog&&window.__dgLog('timer','native armed %.0fs');", delay]];
+}
+
+- (void)fireSleepTimer {
+    if (self.timerFired) return;
+    self.timerFired = YES;
+    self.endOfTrackStop = NO;
+    [self.sleepTimer invalidate];
+    self.sleepTimer = nil;
+    [self.player pause];
+    [self pushPlayerEvent:@{@"ev": @"timerfired"}];
+}
 
 - (void)onItemFailed:(NSNotification *)n {
     NSError *e = n.userInfo[AVPlayerItemFailedToPlayToEndTimeErrorKey];
